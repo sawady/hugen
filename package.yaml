@@ -30,6 +30,7 @@ dependencies:
   - mtl
   - random
   - linear
+  - lens
 
 ghc-options:
   - -Wall
