@@ -5,4 +5,4 @@ import Game (game)
 import qualified SDL
 
 main :: IO ()
-main = game "My SDL Application" SDL.defaultWindow
+main = game "Hugen" SDL.defaultWindow

@@ -1,37 +1,43 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# OPTIONS_GHC -Wno-unused-top-binds #-}
 
-module Game (game) where
+module Game (game, window, renderer, sprites, clean) where
 
 import Control.Lens
+import Control.Monad.Except (MonadError (catchError))
 import Control.Monad.State
+import qualified Data.Set as Set
 import Data.Text (Text)
-import Renderer (Renderer)
 import qualified SDL
 import qualified SDL.Image
+import Sprite (loadFromSheet)
+import qualified Sprite
 import System.Exit (exitFailure, exitSuccess)
-import Window (Window)
-import Control.Monad.Except ( MonadError(catchError) )
+import Control.Lens.Internal.CTypes (Word32)
 
 -- Unified Game data type
 data Game = Game
-  { _window :: Window,
-    _renderer :: Renderer,
-    _background :: SDL.Texture,
-    _clean :: [IO ()]
+  { _window :: SDL.Window,
+    _renderer :: SDL.Renderer,
+    _sprites :: [Sprite.Sprite],
+    _clean :: [IO ()],
+    _activeKeys :: Set.Set SDL.Keycode
   }
 
 makeLenses ''Game
 
-type Action a = StateT Game IO a
+type GameIO a = StateT Game IO a
 
 -- Main game entry point
 game :: Text -> SDL.WindowConfig -> IO ()
 game title config = do
   gameState <- initSDL title config
-  void $ execStateT gameloop gameState
+  void $ (`execStateT` gameState) $ do 
+    loadAssets
+    currentTime <- SDL.ticks
+    sprites . ix 1 %= Sprite.scale 2
+    gameloop currentTime 0
 
 -- Initialize SDL and the game resources
 initSDL :: Text -> SDL.WindowConfig -> IO Game
@@ -49,67 +55,143 @@ initSDL title config = do
   let cleanWindow = SDL.destroyWindow w
 
   -- Create the renderer
-  r <- SDL.createRenderer w (-1) SDL.defaultRenderer `andCatch` "Error creating Renderer"
+  r <- SDL.createRenderer w (-1) SDL.RendererConfig { SDL.rendererType = SDL.AcceleratedVSyncRenderer, SDL.rendererTargetTexture = False } `andCatch` "Error creating Renderer"
   let cleanRenderer = SDL.destroyRenderer r
-
-  -- Load the background texture
-  b <- SDL.Image.loadTexture r "./resources/bg.png" `andCatch` "Error loading Texture"
-  let cleanTexture = SDL.destroyTexture b
 
   -- Return the fully constructed `Game` object
   return $
     Game
       { _window = w,
         _renderer = r,
-        _background = b,
-        _clean = [cleanTexture, cleanRenderer, cleanWindow, cleanImage, cleanSDL]
+        _sprites = [],
+        _clean = [cleanRenderer, cleanWindow, cleanImage, cleanSDL],
+        _activeKeys = Set.empty
       }
+
+loadAssets :: GameIO ()
+loadAssets = do
+  loadSpriteFromSheet "sonic" [50, 50, 50, 50]
+  loadSprite "bg"
+
+loadSprite :: String -> GameIO ()
+loadSprite name = do
+  r <- use renderer
+  s <- liftIO $ Sprite.load r (image name) `andCatch` "Error loading Texture"
+  addSprite s
+
+loadSpriteFromSheet :: String -> [Int] -> StateT Game IO ()
+loadSpriteFromSheet name frames = do
+  r <- use renderer
+  s <- liftIO $ Sprite.loadFromSheet r (image name) frames `andCatch` "Error loading Texture"
+  addSprite s
+
+image :: String -> String
+image name = "resources/" ++ name ++ ".png"
+
+addSprite :: Sprite.Sprite -> GameIO ()
+addSprite s = sprites %= (s :)
 
 -- Generalized error handling and cleanup
 andCatch :: IO a -> String -> IO a
 andCatch action errorMsg = catchError action (exitWith errorMsg)
 
-exitWith :: Show a => String -> a -> IO b
+exitWith :: (Show a) => String -> a -> IO b
 exitWith errorMsg e = do
   putStrLn $ errorMsg ++ ":"
   print e
   exitFailure
 
+cleanup :: GameIO ()
+cleanup =
+  do
+    use clean >>= liftIO . sequence_
+    use sprites >>= mapM_ Sprite.destroy
+
 -- Clean up resources and exit
-exitClean :: Action a
+exitClean :: GameIO a
 exitClean = do
   liftIO $ putStrLn "Exit clean!"
-  actions <- use clean
-  liftIO $ sequence_ actions
+  cleanup
   liftIO exitSuccess
 
 -- Handle SDL events
-handleEvent :: SDL.Event -> Action ()
-handleEvent event = case SDL.eventPayload event of
-  SDL.KeyboardEvent keyboardEvent
-    | SDL.keyboardEventKeyMotion keyboardEvent == SDL.Pressed ->
-        case SDL.keysymKeycode (SDL.keyboardEventKeysym keyboardEvent) of
-          SDL.KeycodeEscape -> exitClean
-          SDL.KeycodeQ -> exitClean
-          _ -> return ()
-  SDL.QuitEvent -> exitClean
-  _ -> return ()
+handleEvent :: SDL.Event -> GameIO ()
+handleEvent event =
+  case SDL.eventPayload event of
+    SDL.KeyboardEvent keyboardEvent ->
+      let keycode = SDL.keysymKeycode (SDL.keyboardEventKeysym keyboardEvent)
+       in case SDL.keyboardEventKeyMotion keyboardEvent of
+            SDL.Pressed -> activeKeys %= Set.insert keycode
+            SDL.Released -> activeKeys %= Set.delete keycode
+    SDL.QuitEvent -> exitClean
+    _ -> return ()
+
+updateSprites :: Word32 -> GameIO ()
+updateSprites dt = do
+  let speed = fromIntegral dt * 100 -- Movement speed in pixels per second
+      s = round $ speed / (1000 :: Double)
+  keys <- use activeKeys
+  when (SDL.KeycodeUp `Set.member` keys) $
+    sprites . ix 1 . Sprite.posY -= s
+  when (SDL.KeycodeDown `Set.member` keys) $
+    sprites . ix 1 . Sprite.posY += s
+  when (SDL.KeycodeLeft `Set.member` keys) $
+    sprites . ix 1 . Sprite.posX -= s
+  when (SDL.KeycodeRight `Set.member` keys) $
+    sprites . ix 1 . Sprite.posX += s
+  sprites . ix 1 %= Sprite.nextFrame dt
+
+measure :: (MonadIO m) => m a -> String -> m a
+measure action label = do
+  start <- SDL.ticks
+  result <- action
+  end <- SDL.ticks
+  liftIO $ putStrLn $ label ++ " took: " ++ show (end - start) ++ "ms"
+  return result
 
 -- Game loop
-gameloop :: Action ()
-gameloop = do
+gameloop :: Word32 -> Word32 -> GameIO ()
+gameloop lastTime accumulator = do
   -- Poll and handle events
-  SDL.pollEvents >>= mapM_ handleEvent
+  handleEvents
+
+  -- Get the current time
+  currentTime <- SDL.ticks
+  let dt = currentTime - lastTime
+      accumulator' = accumulator + dt
+      fixedStep = 16 -- 16ms per frame for 60 FPS
+
+  -- Update logic in fixed steps
+  when (accumulator' >= fixedStep) $ do
+    updateSprites fixedStep
+    detectQuit
+    gameloop currentTime (accumulator' - fixedStep)
 
   -- Render the frame
+  render
+
+  -- Delay for any remaining time in the current frame
+  frameTime <- fmap (\t -> t - lastTime) SDL.ticks
+  when (frameTime < fixedStep) $
+    liftIO $ SDL.delay (fixedStep - frameTime)
+
+  actualFrameTime <- fmap (\t -> t - lastTime) SDL.ticks
+  liftIO $ putStrLn $ "Frame Time: " ++ show actualFrameTime ++ "ms (Expected: 16ms)"
+
+  -- Loop with updated time
+  gameloop currentTime accumulator'
+
+detectQuit :: GameIO ()
+detectQuit = do
+  keys <- use activeKeys
+  when (SDL.KeycodeQ `Set.member` keys) exitClean
+
+handleEvents :: GameIO ()
+handleEvents = SDL.pollEvents >>= mapM_ handleEvent
+
+render :: GameIO ()
+render = do
   r <- use renderer
-  b <- use background
-  liftIO $ SDL.clear r
-  liftIO $ SDL.copy r b Nothing Nothing
-  liftIO $ SDL.present r
-
-  -- Delay for frame timing (16ms for ~60fps)
-  liftIO $ SDL.delay 16
-
-  -- Recursive call
-  gameloop
+  SDL.clear r
+  use sprites >>= mapM_ (Sprite.render r)
+  SDL.present r
