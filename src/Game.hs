@@ -2,20 +2,20 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Game (game, window, renderer, sprites, clean) where
+module Game (game, window, renderer, sprites, clean, windowSize) where
 
+import Control.Concurrent (threadDelay)
 import Control.Lens
 import Control.Monad.Except (MonadError (catchError))
 import Control.Monad.State
 import qualified Data.Set as Set
 import Data.Text (Text)
+import Foreign.C (CInt)
 import qualified SDL
 import qualified SDL.Image
 import Sprite (loadFromSheet)
 import qualified Sprite
 import System.Exit (exitFailure, exitSuccess)
-import Control.Lens.Internal.CTypes (Word32)
-import Control.Concurrent (threadDelay)
 
 -- Unified Game data type
 data Game = Game
@@ -23,7 +23,8 @@ data Game = Game
     _renderer :: SDL.Renderer,
     _sprites :: [Sprite.Sprite],
     _clean :: [IO ()],
-    _activeKeys :: Set.Set SDL.Keycode
+    _activeKeys :: Set.Set SDL.Keycode,
+    _windowSize :: SDL.V2 CInt
   }
 
 makeLenses ''Game
@@ -41,7 +42,7 @@ type GameIO a = StateT Game IO a
 game :: Text -> SDL.WindowConfig -> IO ()
 game title config = do
   gameState <- initSDL title config
-  void $ (`execStateT` gameState) $ do 
+  void $ (`execStateT` gameState) $ do
     loadAssets
     sprites . ix 1 %= Sprite.scale 2
     gameloop
@@ -72,7 +73,8 @@ initSDL title config = do
         _renderer = r,
         _sprites = [],
         _clean = [cleanRenderer, cleanWindow, cleanImage, cleanSDL],
-        _activeKeys = Set.empty
+        _activeKeys = Set.empty,
+        _windowSize = SDL.V2 800 600 -- Initialize window size
       }
 
 loadAssets :: GameIO ()
@@ -130,12 +132,27 @@ handleEvent event =
        in case SDL.keyboardEventKeyMotion keyboardEvent of
             SDL.Pressed -> activeKeys %= Set.insert keycode
             SDL.Released -> activeKeys %= Set.delete keycode
+    SDL.WindowResizedEvent e -> handleResize $ fmap fromIntegral (SDL.windowResizedEventSize e)
     SDL.QuitEvent -> exitClean
     _ -> return ()
 
+handleResize :: SDL.V2 CInt -> GameIO ()
+handleResize newSize = do
+  oldSize <- use windowSize
+  let SDL.V2 oldWidth oldHeight = oldSize
+      SDL.V2 newWidth newHeight = newSize
+      scaleX = fromIntegral newWidth / fromIntegral oldWidth
+      scaleY = fromIntegral newHeight / fromIntegral oldHeight
+
+  -- Update all sprites
+  sprites . mapped %= Sprite.resizeSprite scaleX scaleY
+
+  -- Update stored window size
+  windowSize .= newSize
+
 update :: GameIO ()
 update = do
-  let speed = 10 -- Movement speed in pixels per second
+  let speed = 15
   keys <- use activeKeys
   when (SDL.KeycodeUp `Set.member` keys) $
     sprites . ix 1 . Sprite.posY -= speed

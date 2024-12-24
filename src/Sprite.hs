@@ -18,6 +18,8 @@ module Sprite
     destroy,
     nextFrame,
     scale,
+    scaleTo,
+    resizeSprite,
   )
 where
 
@@ -89,8 +91,9 @@ nextFrame sprite =
       mx = min (sprite ^. maxFrames) (length durations) -- Safeguard
       frameDuration = durations !! frame
    in if timer >= frameDuration
-        then setAnimationFrame ((frame + 1) `mod` mx) $
-             sprite & frameTimer .~ (timer - frameDuration)
+        then
+          setAnimationFrame ((frame + 1) `mod` mx) $
+            sprite & frameTimer .~ (timer - frameDuration)
         else sprite & frameTimer .~ timer
 
 -- Set the animation frame
@@ -124,6 +127,22 @@ posX = position . _Wrapped' . _x
 
 posY :: Lens' Sprite CInt
 posY = position . _Wrapped' . _y
+
+scaleTo :: CInt -> CInt -> Sprite -> Sprite
+scaleTo newWidth newHeight sprite =
+  sprite & dimensions .~ V2 newWidth newHeight
+
+resizeSprite :: Float -> Float -> Sprite -> Sprite
+resizeSprite scaleX scaleY sprite =
+  let V2 width height = sprite ^. dimensions
+      newWidth = round (fromIntegral width * scaleX)
+      newHeight = round (fromIntegral height * scaleY)
+      P (V2 posX' posY') = sprite ^. position
+      newPosX = round (fromIntegral posX' * scaleX)
+      newPosY = round (fromIntegral posY' * scaleY)
+   in sprite
+        & dimensions .~ V2 newWidth newHeight
+        & position .~ P (V2 newPosX newPosY)
 
 -- Destroy a sprite's texture
 destroy :: (MonadIO m) => Sprite -> m ()
