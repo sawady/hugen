@@ -15,6 +15,7 @@ import Sprite (loadFromSheet)
 import qualified Sprite
 import System.Exit (exitFailure, exitSuccess)
 import Control.Lens.Internal.CTypes (Word32)
+import Control.Concurrent (threadDelay)
 
 -- Unified Game data type
 data Game = Game
@@ -27,6 +28,13 @@ data Game = Game
 
 makeLenses ''Game
 
+-- | Constants
+ticksPerSecond :: Int
+ticksPerSecond = 60
+
+tickDuration :: Int
+tickDuration = 1000000 `div` ticksPerSecond -- Microseconds per tick
+
 type GameIO a = StateT Game IO a
 
 -- Main game entry point
@@ -35,9 +43,8 @@ game title config = do
   gameState <- initSDL title config
   void $ (`execStateT` gameState) $ do 
     loadAssets
-    currentTime <- SDL.ticks
     sprites . ix 1 %= Sprite.scale 2
-    gameloop currentTime 0
+    gameloop
 
 -- Initialize SDL and the game resources
 initSDL :: Text -> SDL.WindowConfig -> IO Game
@@ -55,7 +62,7 @@ initSDL title config = do
   let cleanWindow = SDL.destroyWindow w
 
   -- Create the renderer
-  r <- SDL.createRenderer w (-1) SDL.RendererConfig { SDL.rendererType = SDL.AcceleratedVSyncRenderer, SDL.rendererTargetTexture = False } `andCatch` "Error creating Renderer"
+  r <- SDL.createRenderer w (-1) SDL.defaultRenderer `andCatch` "Error creating Renderer"
   let cleanRenderer = SDL.destroyRenderer r
 
   -- Return the fully constructed `Game` object
@@ -70,7 +77,7 @@ initSDL title config = do
 
 loadAssets :: GameIO ()
 loadAssets = do
-  loadSpriteFromSheet "sonic" [50, 50, 50, 50]
+  loadSpriteFromSheet "sonic" [4, 4, 4, 4]
   loadSprite "bg"
 
 loadSprite :: String -> GameIO ()
@@ -126,63 +133,43 @@ handleEvent event =
     SDL.QuitEvent -> exitClean
     _ -> return ()
 
-updateSprites :: Word32 -> GameIO ()
-updateSprites dt = do
-  let speed = fromIntegral dt * 100 -- Movement speed in pixels per second
-      s = round $ speed / (1000 :: Double)
+update :: GameIO ()
+update = do
+  let speed = 10 -- Movement speed in pixels per second
   keys <- use activeKeys
   when (SDL.KeycodeUp `Set.member` keys) $
-    sprites . ix 1 . Sprite.posY -= s
+    sprites . ix 1 . Sprite.posY -= speed
   when (SDL.KeycodeDown `Set.member` keys) $
-    sprites . ix 1 . Sprite.posY += s
+    sprites . ix 1 . Sprite.posY += speed
   when (SDL.KeycodeLeft `Set.member` keys) $
-    sprites . ix 1 . Sprite.posX -= s
+    sprites . ix 1 . Sprite.posX -= speed
   when (SDL.KeycodeRight `Set.member` keys) $
-    sprites . ix 1 . Sprite.posX += s
-  sprites . ix 1 %= Sprite.nextFrame dt
-
-measure :: (MonadIO m) => m a -> String -> m a
-measure action label = do
-  start <- SDL.ticks
-  result <- action
-  end <- SDL.ticks
-  liftIO $ putStrLn $ label ++ " took: " ++ show (end - start) ++ "ms"
-  return result
+    sprites . ix 1 . Sprite.posX += speed
+  sprites . ix 1 %= Sprite.nextFrame
 
 -- Game loop
-gameloop :: Word32 -> Word32 -> GameIO ()
-gameloop lastTime accumulator = do
+gameloop :: GameIO ()
+gameloop = do
+  start <- SDL.ticks
+
   -- Poll and handle events
   handleEvents
+  wantsQuit
 
-  -- Get the current time
-  currentTime <- SDL.ticks
-  let dt = currentTime - lastTime
-      accumulator' = accumulator + dt
-      fixedStep = 16 -- 16ms per frame for 60 FPS
-
-  -- Update logic in fixed steps
-  when (accumulator' >= fixedStep) $ do
-    updateSprites fixedStep
-    detectQuit
-    gameloop currentTime (accumulator' - fixedStep)
-
-  -- Render the frame
+  update
   render
 
-  -- Delay for any remaining time in the current frame
-  frameTime <- fmap (\t -> t - lastTime) SDL.ticks
-  when (frameTime < fixedStep) $
-    liftIO $ SDL.delay (fixedStep - frameTime)
-
-  actualFrameTime <- fmap (\t -> t - lastTime) SDL.ticks
-  liftIO $ putStrLn $ "Frame Time: " ++ show actualFrameTime ++ "ms (Expected: 16ms)"
+  -- Wait for the next tick
+  end <- SDL.ticks
+  let elapsed = end - start
+      delayTime = max 0 (tickDuration - fromIntegral elapsed)
+  liftIO $ threadDelay delayTime
 
   -- Loop with updated time
-  gameloop currentTime accumulator'
+  gameloop
 
-detectQuit :: GameIO ()
-detectQuit = do
+wantsQuit :: GameIO ()
+wantsQuit = do
   keys <- use activeKeys
   when (SDL.KeycodeQ `Set.member` keys) exitClean
 

@@ -22,7 +22,6 @@ module Sprite
 where
 
 import Control.Lens
-import Control.Lens.Internal.CTypes (Word32)
 import Control.Monad.IO.Class (MonadIO)
 import Foreign.C (CInt)
 import Linear.V2 (_x, _y)
@@ -40,7 +39,7 @@ data Sprite = Sprite
     _maxFrames :: Int, -- Number of frames in the row
     _currentFrame :: Int, -- Current animation frame
     _frameDurations :: [Int], -- Duration (in milliseconds) of each frame
-    _frameTimer :: Word32 -- Time elapsed for the current frame
+    _frameTimer :: Int -- Time elapsed for the current frame
   }
 
 makeLenses ''Sprite
@@ -82,16 +81,16 @@ loadFromSheet renderer filePath durations = do
         & frameDurations .~ durations
         & frameTimer .~ 0
 
-nextFrame :: Word32 -> Sprite -> Sprite
-nextFrame dt sprite =
-  let timer = sprite ^. frameTimer + dt
+nextFrame :: Sprite -> Sprite
+nextFrame sprite =
+  let timer = sprite ^. frameTimer + 1
       durations = sprite ^. frameDurations
       frame = sprite ^. currentFrame
       mx = min (sprite ^. maxFrames) (length durations) -- Safeguard
       frameDuration = durations !! frame
-   in if timer >= fromIntegral frameDuration
+   in if timer >= frameDuration
         then setAnimationFrame ((frame + 1) `mod` mx) $
-             sprite & frameTimer .~ (timer - fromIntegral frameDuration)
+             sprite & frameTimer .~ (timer - frameDuration)
         else sprite & frameTimer .~ timer
 
 -- Set the animation frame

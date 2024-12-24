@@ -28,6 +28,7 @@ library
       Game
       Lib
       Sprite
+      Utils
   other-modules:
       Paths_hugen
   autogen-modules:
