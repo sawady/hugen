@@ -2,7 +2,7 @@
 
 This is a game engine called `Hugen`.
 
-It's implemented in Haskell, and it's inspired on the classic fighting game engine called [MUGEN](https://es.wikipedia.org/wiki/MUGEN).
+It's implemented in Haskell with SDL2 and many standard libraries, and it's inspired on the classic fighting game engine called [MUGEN](https://es.wikipedia.org/wiki/MUGEN).
 
 The game engine works with ticks at a constante rate, so you can implement behaviour and animations around time in that unit.
 
