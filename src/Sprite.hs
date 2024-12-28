@@ -1,5 +1,6 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
+{-# LANGUAGE InstanceSigs #-}
 
 module Sprite
   ( Sprite,
@@ -10,6 +11,7 @@ module Sprite
     frameDurations,
     frameTimer,
     texture,
+    name,
     position,
     posX,
     posY,
@@ -33,7 +35,8 @@ import SDL.Vect (Point (..), V2 (..))
 
 -- Sprite data type
 data Sprite = Sprite
-  { _texture :: SDL.Texture, -- The texture for the sprite
+  { _name :: String,
+    _texture :: SDL.Texture, -- The texture for the sprite
     _position :: Point V2 CInt, -- Position of the sprite (x, y)
     _dimensions :: V2 CInt, -- Width and height of the sprite
     _rect :: Maybe (SDL.Rectangle CInt), -- Source rectangle for animations
@@ -46,15 +49,20 @@ data Sprite = Sprite
 
 makeLenses ''Sprite
 
+instance Eq Sprite where
+  (==) :: Sprite -> Sprite -> Bool
+  (==) s1 s2 = _name s1 == _name s2
+
 -- Load a sprite from an image file
-load :: (MonadIO m) => SDL.Renderer -> FilePath -> m Sprite
-load renderer filePath = do
+load :: (MonadIO m) => SDL.Renderer -> String -> FilePath -> m Sprite
+load renderer n filePath = do
   t <- SDL.Image.loadTexture renderer filePath
   SDL.TextureInfo {..} <- SDL.queryTexture t
   let d = V2 textureWidth textureHeight
   return $
     Sprite
-      { _texture = t,
+      { _name = n,
+        _texture = t,
         _position = P (V2 0 0), -- Default position
         _dimensions = d,
         _rect = Nothing, -- Render the entire texture by default
@@ -66,9 +74,9 @@ load renderer filePath = do
       }
 
 -- Load a sprite from a spritesheet
-loadFromSheet :: (MonadIO m) => SDL.Renderer -> FilePath -> [Int] -> m Sprite
-loadFromSheet renderer filePath durations = do
-  sprite <- load renderer filePath
+loadFromSheet :: (MonadIO m) => SDL.Renderer -> String -> FilePath -> [Int] -> m Sprite
+loadFromSheet renderer n filePath durations = do
+  sprite <- load renderer n filePath
   let totalFrames = length durations
       V2 tw th = sprite ^. dimensions
       fw = tw `div` fromIntegral totalFrames -- Frame width

@@ -2,17 +2,19 @@
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
 
-module Game (game, window, renderer, sprites, clean, windowSize) where
+module Game (game, window, renderer, scenes, clean, windowSize) where
 
 import Control.Concurrent (threadDelay)
 import Control.Lens
 import Control.Monad.Except (MonadError (catchError))
 import Control.Monad.State
+import qualified Data.Map as M
 import qualified Data.Set as Set
 import Data.Text (Text)
 import Foreign.C (CInt)
 import qualified SDL
 import qualified SDL.Image
+import qualified Scene
 import Sprite (loadFromSheet)
 import qualified Sprite
 import System.Exit (exitFailure, exitSuccess)
@@ -21,7 +23,8 @@ import System.Exit (exitFailure, exitSuccess)
 data Game = Game
   { _window :: SDL.Window,
     _renderer :: SDL.Renderer,
-    _sprites :: [Sprite.Sprite],
+    _scenes :: M.Map String Scene.Scene,
+    _sceneName :: String,
     _clean :: [IO ()],
     _activeKeys :: Set.Set SDL.Keycode,
     _windowSize :: SDL.V2 CInt
@@ -44,7 +47,8 @@ game title config = do
   gameState <- initSDL title config
   void $ (`execStateT` gameState) $ do
     loadAssets
-    sprites . ix 1 %= Sprite.scale 2
+    sceneName .= "sonic"
+    zoom scene Scene.onStart
     gameloop
 
 -- Initialize SDL and the game resources
@@ -71,7 +75,8 @@ initSDL title config = do
     Game
       { _window = w,
         _renderer = r,
-        _sprites = [],
+        _scenes = M.empty,
+        _sceneName = "empty",
         _clean = [cleanRenderer, cleanWindow, cleanImage, cleanSDL],
         _activeKeys = Set.empty,
         _windowSize = SDL.V2 800 600 -- Initialize window size
@@ -79,26 +84,31 @@ initSDL title config = do
 
 loadAssets :: GameIO ()
 loadAssets = do
-  loadSpriteFromSheet "sonic" [4, 4, 4, 4]
-  loadSprite "bg"
+  _sonic <- loadSpriteFromSheet "sonic" [4, 4, 4, 4]
+  _bg <- loadSprite "bg"
+  addScene $ Scene.new "sonic" [_sonic, _bg]
 
-loadSprite :: String -> GameIO ()
+addScene :: Scene.Scene -> GameIO ()
+addScene s = scenes %= M.insert (s ^. Scene.name) s
+
+renderScene :: GameIO ()
+renderScene = do
+    ss <- use (scene . Scene.sprites)
+    r <- use renderer
+    mapM_ (Sprite.render r) ss
+
+loadSprite :: String -> GameIO Sprite.Sprite
 loadSprite name = do
   r <- use renderer
-  s <- liftIO $ Sprite.load r (image name) `andCatch` "Error loading Texture"
-  addSprite s
+  liftIO $ Sprite.load r name (image name) `andCatch` "Error loading Texture"
 
-loadSpriteFromSheet :: String -> [Int] -> StateT Game IO ()
+loadSpriteFromSheet :: String -> [Int] -> GameIO Sprite.Sprite
 loadSpriteFromSheet name frames = do
   r <- use renderer
-  s <- liftIO $ Sprite.loadFromSheet r (image name) frames `andCatch` "Error loading Texture"
-  addSprite s
+  liftIO $ Sprite.loadFromSheet r name (image name) frames `andCatch` "Error loading Texture"
 
 image :: String -> String
 image name = "resources/" ++ name ++ ".png"
-
-addSprite :: Sprite.Sprite -> GameIO ()
-addSprite s = sprites %= (s :)
 
 -- Generalized error handling and cleanup
 andCatch :: IO a -> String -> IO a
@@ -114,7 +124,7 @@ cleanup :: GameIO ()
 cleanup =
   do
     use clean >>= liftIO . sequence_
-    use sprites >>= mapM_ Sprite.destroy
+    use (scenes . traverse . Scene.sprites) >>= mapM_ Sprite.destroy
 
 -- Clean up resources and exit
 exitClean :: GameIO a
@@ -145,24 +155,26 @@ handleResize newSize = do
       scaleY = fromIntegral newHeight / fromIntegral oldHeight
 
   -- Update all sprites
-  sprites . mapped %= Sprite.resizeSprite scaleX scaleY
+  scene . Scene.sprites . mapped %= Sprite.resizeSprite scaleX scaleY
 
   -- Update stored window size
   windowSize .= newSize
 
+scene :: Lens' Game Scene.Scene
+scene = lens getScene setScene
+  where
+    getScene g =
+      let name = g ^. sceneName
+       in g ^. scenes . at name . non (Scene.new "" [])
+
+    setScene g newScene =
+      let name = g ^. sceneName
+       in g & scenes . ix name .~ newScene
+
 update :: GameIO ()
 update = do
-  let speed = 15
   keys <- use activeKeys
-  when (SDL.KeycodeUp `Set.member` keys) $
-    sprites . ix 1 . Sprite.posY -= speed
-  when (SDL.KeycodeDown `Set.member` keys) $
-    sprites . ix 1 . Sprite.posY += speed
-  when (SDL.KeycodeLeft `Set.member` keys) $
-    sprites . ix 1 . Sprite.posX -= speed
-  when (SDL.KeycodeRight `Set.member` keys) $
-    sprites . ix 1 . Sprite.posX += speed
-  sprites . ix 1 %= Sprite.nextFrame
+  zoom scene $ Scene.update keys
 
 -- Game loop
 gameloop :: GameIO ()
@@ -197,5 +209,5 @@ render :: GameIO ()
 render = do
   r <- use renderer
   SDL.clear r
-  use sprites >>= mapM_ (Sprite.render r)
+  renderScene
   SDL.present r
