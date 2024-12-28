@@ -26,6 +26,7 @@ source-repository head
 library
   exposed-modules:
       Game
+      Scene
       Sprite
       Utils
   other-modules:
