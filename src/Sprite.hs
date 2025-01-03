@@ -1,6 +1,6 @@
+{-# LANGUAGE InstanceSigs #-}
 {-# LANGUAGE RecordWildCards #-}
 {-# LANGUAGE TemplateHaskell #-}
-{-# LANGUAGE InstanceSigs #-}
 
 module Sprite
   ( Sprite,
@@ -26,12 +26,12 @@ module Sprite
 where
 
 import Control.Lens
-import Control.Monad.IO.Class (MonadIO)
+import Control.Monad.IO.Class (MonadIO (liftIO))
 import Foreign.C (CInt)
 import Linear.V2 (_x, _y)
 import qualified SDL
-import qualified SDL.Image
 import SDL.Vect (Point (..), V2 (..))
+import qualified Texture
 
 -- Sprite data type
 data Sprite = Sprite
@@ -56,7 +56,7 @@ instance Eq Sprite where
 -- Load a sprite from an image file
 load :: (MonadIO m) => SDL.Renderer -> String -> FilePath -> m Sprite
 load renderer n filePath = do
-  t <- SDL.Image.loadTexture renderer filePath
+  t <- liftIO $ Texture.load renderer filePath
   SDL.TextureInfo {..} <- SDL.queryTexture t
   let d = V2 textureWidth textureHeight
   return $
@@ -76,7 +76,7 @@ load renderer n filePath = do
 -- Load a sprite from a spritesheet
 loadFromSheet :: (MonadIO m) => SDL.Renderer -> String -> FilePath -> [Int] -> m Sprite
 loadFromSheet renderer n filePath durations = do
-  sprite <- load renderer n filePath
+  sprite <- Sprite.load renderer n filePath
   let totalFrames = length durations
       V2 tw th = sprite ^. dimensions
       fw = tw `div` fromIntegral totalFrames -- Frame width
@@ -140,7 +140,7 @@ scaleTo :: CInt -> CInt -> Sprite -> Sprite
 scaleTo newWidth newHeight sprite =
   sprite & dimensions .~ V2 newWidth newHeight
 
-resizeSprite :: Float -> Float -> Sprite -> Sprite
+resizeSprite :: Double -> Double -> Sprite -> Sprite
 resizeSprite scaleX scaleY sprite =
   let V2 width height = sprite ^. dimensions
       newWidth = round (fromIntegral width * scaleX)

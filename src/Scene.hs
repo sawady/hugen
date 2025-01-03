@@ -7,12 +7,12 @@ module Scene (Scene, new, name, sprites, onStart, update, addSprite, destroySpri
 import Control.Lens
 import Control.Monad.State (StateT, when)
 import Data.Foldable (Foldable (foldl'))
-import qualified Data.Map as M
-import qualified Data.Set as S
+import qualified Data.Map as Map
+import GameInput (GameInput, pressed)
 import qualified SDL
 import qualified Sprite
 
-data Scene = Scene {_name :: String, _sprites :: M.Map String Sprite.Sprite}
+data Scene = Scene {_name :: String, _sprites :: Map.Map String Sprite.Sprite}
 
 instance Eq Scene where
   (==) :: Scene -> Scene -> Bool
@@ -25,28 +25,28 @@ new n =
   foldl' (flip addSprite) $
     Scene
       { _name = n,
-        _sprites = M.empty
+        _sprites = Map.empty
       }
 
 addSprite :: Sprite.Sprite -> Scene -> Scene
-addSprite sprite = sprites %~ M.insert (sprite ^. Sprite.name) sprite
+addSprite sprite = sprites %~ Map.insert (sprite ^. Sprite.name) sprite
 
 destroySprite :: String -> Scene -> Scene
-destroySprite k = sprites %~ M.delete k
+destroySprite k = sprites %~ Map.delete k
 
 onStart :: StateT Scene IO ()
 onStart = do
   sprites . ix "sonic" %= Sprite.scale 2
 
-update :: S.Set SDL.Keycode -> StateT Scene IO ()
-update keys = do
+update :: GameInput -> StateT Scene IO ()
+update input = do
   let speed = 15
-  when (SDL.KeycodeUp `S.member` keys) $
+  when (pressed SDL.KeycodeUp input) $
     sprites . ix "sonic" . Sprite.posY -= speed
-  when (SDL.KeycodeDown `S.member` keys) $
+  when (pressed SDL.KeycodeDown input) $
     sprites . ix "sonic" . Sprite.posY += speed
-  when (SDL.KeycodeLeft `S.member` keys) $
+  when (pressed SDL.KeycodeLeft input) $
     sprites . ix "sonic" . Sprite.posX -= speed
-  when (SDL.KeycodeRight `S.member` keys) $
+  when (pressed SDL.KeycodeRight input) $
     sprites . ix "sonic" . Sprite.posX += speed
   sprites . ix "sonic" %= Sprite.nextFrame

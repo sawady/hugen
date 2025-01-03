@@ -1,23 +1,42 @@
 {-# LANGUAGE OverloadedStrings #-}
 {-# LANGUAGE RecordWildCards #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE TemplateHaskell #-}
 
 module Game (game, window, renderer, scenes, clean, windowSize) where
 
 import Control.Concurrent (threadDelay)
 import Control.Lens
-import Control.Monad.Except (MonadError (catchError))
+    ( Lens',
+      (&),
+      (^.),
+      use,
+      non,
+      lens,
+      (%=),
+      (.=),
+      (.~),
+      mapped,
+      makeLenses,
+      At(at),
+      Ixed(ix),
+      Zoom(zoom) )
 import Control.Monad.State
+    ( void, when, MonadIO(liftIO), StateT, execStateT )
+import qualified Data.Ini.Config as Config
 import qualified Data.Map as M
-import qualified Data.Set as Set
 import Data.Text (Text)
+import qualified Data.Text.IO as Text
 import Foreign.C (CInt)
+import qualified GameInput
 import qualified SDL
 import qualified SDL.Image
 import qualified Scene
 import Sprite (loadFromSheet)
 import qualified Sprite
-import System.Exit (exitFailure, exitSuccess)
+import System.Exit (exitSuccess)
+import Utils
+import qualified Config
 
 -- Unified Game data type
 data Game = Game
@@ -26,7 +45,7 @@ data Game = Game
     _scenes :: M.Map String Scene.Scene,
     _sceneName :: String,
     _clean :: [IO ()],
-    _activeKeys :: Set.Set SDL.Keycode,
+    _input :: GameInput.GameInput,
     _windowSize :: SDL.V2 CInt
   }
 
@@ -44,30 +63,35 @@ type GameIO a = StateT Game IO a
 -- Main game entry point
 game :: Text -> SDL.WindowConfig -> IO ()
 game title config = do
-  gameState <- initSDL title config
-  void $ (`execStateT` gameState) $ do
-    loadAssets
-    sceneName .= "sonic"
-    zoom scene Scene.onStart
-    gameloop
+  content <- Text.readFile "resources/config.ini"
+  Config.load $ \cfg -> do
+      let w = cfg ^. Config.width
+          h = cfg ^. Config.height
+      gameState <- initSDL title (w, h) config
+      void $ (`execStateT` gameState) $ do
+        loadAssets
+        sceneName .= "sonic"
+        zoom scene Scene.onStart
+        gameloop
 
 -- Initialize SDL and the game resources
-initSDL :: Text -> SDL.WindowConfig -> IO Game
-initSDL title config = do
+initSDL :: Text -> (CInt, CInt) -> SDL.WindowConfig -> IO Game
+initSDL title (width, height) config = do
   -- Initialize SDL
-  SDL.initializeAll `andCatch` "Error initializing SDL2"
+  SDL.initializeAll `catching` "Error initializing SDL2"
   let cleanSDL = SDL.quit
 
   -- Initialize SDL Image
-  SDL.Image.initialize [SDL.Image.InitPNG] `andCatch` "Error initializing SDL2 Image"
+  SDL.Image.initialize [SDL.Image.InitPNG] `catching` "Error initializing SDL2 Image"
   let cleanImage = SDL.Image.quit
 
   -- Create the window
-  w <- SDL.createWindow title config `andCatch` "Error creating Window"
+  w <- SDL.createWindow title config `catching` "Error creating Window"
   let cleanWindow = SDL.destroyWindow w
+  SDL.windowMinimumSize w SDL.$= SDL.V2 width height
 
   -- Create the renderer
-  r <- SDL.createRenderer w (-1) SDL.defaultRenderer `andCatch` "Error creating Renderer"
+  r <- SDL.createRenderer w (-1) SDL.defaultRenderer `catching` "Error creating Renderer"
   let cleanRenderer = SDL.destroyRenderer r
 
   -- Return the fully constructed `Game` object
@@ -78,8 +102,8 @@ initSDL title config = do
         _scenes = M.empty,
         _sceneName = "empty",
         _clean = [cleanRenderer, cleanWindow, cleanImage, cleanSDL],
-        _activeKeys = Set.empty,
-        _windowSize = SDL.V2 800 600 -- Initialize window size
+        _input = GameInput.create,
+        _windowSize = SDL.V2 width height -- Initialize window size
       }
 
 loadAssets :: GameIO ()
@@ -93,38 +117,21 @@ addScene s = scenes %= M.insert (s ^. Scene.name) s
 
 renderScene :: GameIO ()
 renderScene = do
-    ss <- use (scene . Scene.sprites)
-    r <- use renderer
-    mapM_ (Sprite.render r) ss
+  r <- use renderer
+  use (scene . Scene.sprites) >>= mapM_ (Sprite.render r)
 
 loadSprite :: String -> GameIO Sprite.Sprite
 loadSprite name = do
   r <- use renderer
-  liftIO $ Sprite.load r name (image name) `andCatch` "Error loading Texture"
+  liftIO $ Sprite.load r name (image name) `catching` "Error loading Texture"
 
 loadSpriteFromSheet :: String -> [Int] -> GameIO Sprite.Sprite
 loadSpriteFromSheet name frames = do
   r <- use renderer
-  liftIO $ Sprite.loadFromSheet r name (image name) frames `andCatch` "Error loading Texture"
+  liftIO $ Sprite.loadFromSheet r name (image name) frames
 
 image :: String -> String
 image name = "resources/" ++ name ++ ".png"
-
--- Generalized error handling and cleanup
-andCatch :: IO a -> String -> IO a
-andCatch action errorMsg = catchError action (exitWith errorMsg)
-
-exitWith :: (Show a) => String -> a -> IO b
-exitWith errorMsg e = do
-  putStrLn $ errorMsg ++ ":"
-  print e
-  exitFailure
-
-cleanup :: GameIO ()
-cleanup =
-  do
-    use clean >>= liftIO . sequence_
-    use (scenes . traverse . Scene.sprites) >>= mapM_ Sprite.destroy
 
 -- Clean up resources and exit
 exitClean :: GameIO a
@@ -133,16 +140,20 @@ exitClean = do
   cleanup
   liftIO exitSuccess
 
+cleanup :: GameIO ()
+cleanup =
+  do
+    use clean >>= liftIO . sequence_
+    use (scenes . traverse . Scene.sprites) >>= mapM_ Sprite.destroy
+
 -- Handle SDL events
 handleEvent :: SDL.Event -> GameIO ()
 handleEvent event =
   case SDL.eventPayload event of
-    SDL.KeyboardEvent keyboardEvent ->
-      let keycode = SDL.keysymKeycode (SDL.keyboardEventKeysym keyboardEvent)
-       in case SDL.keyboardEventKeyMotion keyboardEvent of
-            SDL.Pressed -> activeKeys %= Set.insert keycode
-            SDL.Released -> activeKeys %= Set.delete keycode
+    SDL.KeyboardEvent keyboardEvent -> input %= GameInput.addKeyboardEvent keyboardEvent
     SDL.WindowResizedEvent e -> handleResize $ fmap fromIntegral (SDL.windowResizedEventSize e)
+    SDL.MouseMotionEvent e -> input %= GameInput.addMouseMovementEvent e
+    SDL.MouseButtonEvent e -> input %= GameInput.addMouseButtonEvent e
     SDL.QuitEvent -> exitClean
     _ -> return ()
 
@@ -151,10 +162,10 @@ handleResize newSize = do
   oldSize <- use windowSize
   let SDL.V2 oldWidth oldHeight = oldSize
       SDL.V2 newWidth newHeight = newSize
-      scaleX = fromIntegral newWidth / fromIntegral oldWidth
-      scaleY = fromIntegral newHeight / fromIntegral oldHeight
+      scaleX :: Double = fromIntegral newWidth / fromIntegral oldWidth
+      scaleY :: Double = fromIntegral newHeight / fromIntegral oldHeight
 
-  -- Update all sprites
+  -- Update all sprites of current scene
   scene . Scene.sprites . mapped %= Sprite.resizeSprite scaleX scaleY
 
   -- Update stored window size
@@ -170,11 +181,6 @@ scene = lens getScene setScene
     setScene g newScene =
       let name = g ^. sceneName
        in g & scenes . ix name .~ newScene
-
-update :: GameIO ()
-update = do
-  keys <- use activeKeys
-  zoom scene $ Scene.update keys
 
 -- Game loop
 gameloop :: GameIO ()
@@ -199,8 +205,8 @@ gameloop = do
 
 wantsQuit :: GameIO ()
 wantsQuit = do
-  keys <- use activeKeys
-  when (SDL.KeycodeQ `Set.member` keys) exitClean
+  i <- use input
+  when (GameInput.pressed SDL.KeycodeQ i) exitClean
 
 handleEvents :: GameIO ()
 handleEvents = SDL.pollEvents >>= mapM_ handleEvent
@@ -211,3 +217,8 @@ render = do
   SDL.clear r
   renderScene
   SDL.present r
+
+update :: GameIO ()
+update = do
+  i <- use input
+  zoom scene $ Scene.update i

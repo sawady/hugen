@@ -32,6 +32,7 @@ dependencies:
   - linear
   - lens
   - containers
+  - config-ini
 
 ghc-options:
   - -Wall
