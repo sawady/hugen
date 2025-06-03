@@ -5,28 +5,33 @@
 
 module Game (game, window, renderer, scenes, clean, windowSize) where
 
+import qualified Config
 import Control.Concurrent (threadDelay)
 import Control.Lens
-    ( Lens',
-      (&),
-      (^.),
-      use,
-      non,
-      lens,
-      (%=),
-      (.=),
-      (.~),
-      mapped,
-      makeLenses,
-      At(at),
-      Ixed(ix),
-      Zoom(zoom) )
+  ( At (at),
+    Ixed (ix),
+    Lens',
+    Zoom (zoom),
+    lens,
+    makeLenses,
+    mapped,
+    non,
+    use,
+    (%=),
+    (&),
+    (.=),
+    (.~),
+    (^.),
+  )
 import Control.Monad.State
-    ( void, when, MonadIO(liftIO), StateT, execStateT )
-import qualified Data.Ini.Config as Config
+  ( MonadIO (liftIO),
+    StateT,
+    execStateT,
+    void,
+    when,
+  )
 import qualified Data.Map as M
 import Data.Text (Text)
-import qualified Data.Text.IO as Text
 import Foreign.C (CInt)
 import qualified GameInput
 import qualified SDL
@@ -36,7 +41,6 @@ import Sprite (loadFromSheet)
 import qualified Sprite
 import System.Exit (exitSuccess)
 import Utils
-import qualified Config
 
 -- Unified Game data type
 data Game = Game
@@ -61,18 +65,18 @@ tickDuration = 1000000 `div` ticksPerSecond -- Microseconds per tick
 type GameIO a = StateT Game IO a
 
 -- Main game entry point
-game :: Text -> SDL.WindowConfig -> IO ()
-game title config = do
-  content <- Text.readFile "resources/config.ini"
-  Config.load $ \cfg -> do
-      let w = cfg ^. Config.width
-          h = cfg ^. Config.height
-      gameState <- initSDL title (w, h) config
-      void $ (`execStateT` gameState) $ do
-        loadAssets
-        sceneName .= "sonic"
-        zoom scene Scene.onStart
-        gameloop
+game :: SDL.WindowConfig -> IO ()
+game config = do
+  cfg <- Config.load
+  let w = cfg ^. Config.width
+      h = cfg ^. Config.height
+      title = cfg ^. Config.title
+  gameState <- initSDL title (w, h) config
+  void $ (`execStateT` gameState) $ do
+    loadAssets
+    sceneName .= "sonic"
+    zoom scene Scene.onStart
+    gameloop
 
 -- Initialize SDL and the game resources
 initSDL :: Text -> (CInt, CInt) -> SDL.WindowConfig -> IO Game
@@ -107,10 +111,7 @@ initSDL title (width, height) config = do
       }
 
 loadAssets :: GameIO ()
-loadAssets = do
-  _sonic <- loadSpriteFromSheet "sonic" [4, 4, 4, 4]
-  _bg <- loadSprite "bg"
-  addScene $ Scene.new "sonic" [_sonic, _bg]
+loadAssets = sequence [loadSpriteFromSheet "sonic" [4, 4, 4, 4], loadSprite "bg"] >>= addScene . Scene.new "sonic"
 
 addScene :: Scene.Scene -> GameIO ()
 addScene s = scenes %= M.insert (s ^. Scene.name) s
