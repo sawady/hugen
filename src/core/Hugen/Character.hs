@@ -1,0 +1,265 @@
+-- | Character definitions: states, controllers, attacks, animations and
+-- constants. Everything here is static data shared by every match; the
+-- per-match state lives in "Hugen.Fighter".
+--
+-- The model follows MUGEN's CNS files:
+--
+-- * A character is always in exactly one numbered state ('StateDef').
+-- * Entering a state may set the animation, control flag and velocity.
+-- * Every tick the state's 'Controller's run in order. Each one has a
+--   trigger ('Expr' 'Bool') and an 'Action'. A 'ChangeState' stops the rest
+--   of the list and the new state starts running on the same tick.
+-- * Before the current state, the character's global controllers run
+--   (MUGEN's state -1). That is where commands become moves.
+module Hugen.Character
+  ( StateId,
+    Physics (..),
+    HitDef (..),
+    hitDef,
+    Action (..),
+    Controller (..),
+    on,
+    StateDef (..),
+    stateDef,
+    Consts (..),
+    defaultConsts,
+    Character (..),
+    lookupState,
+    lookupAnim,
+    validate,
+    historyTicks,
+
+    -- * Action helpers
+    changeState,
+    changeAnim,
+    setCtrl,
+    velSet,
+    velSetX,
+    velSetY,
+    velAdd,
+    posAdd,
+    setVar,
+    attack,
+    turn,
+  )
+where
+
+import qualified Data.IntMap.Strict as IntMap
+import Data.Maybe (isNothing, mapMaybe)
+import Hugen.Anim
+import Hugen.Command
+import Hugen.Expr
+import Hugen.Fixed
+
+type StateId = Int
+
+-- | What the engine does to the fighter's position every tick.
+data Physics
+  = -- | On the floor, with friction.
+    PhysStand
+  | -- | On the floor, crouching (more friction).
+    PhysCrouch
+  | -- | Gravity; landing sends the fighter to the character's land state.
+    PhysAir
+  | -- | Nothing: the state's controllers move the fighter themselves.
+    PhysNone
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+-- | An attack, made active by the 'Attack' action (MUGEN's HitDef). It
+-- connects at most once, when a hitbox of the current frame overlaps a
+-- hurtbox of the opponent.
+data HitDef = HitDef
+  { hdDamage :: !Int,
+    -- | Ticks the opponent stays in its hit state.
+    hdHitStun :: !Int,
+    -- | Ticks both fighters freeze on impact ("hit stop").
+    hdHitPause :: !Int,
+    -- | Speed the opponent is pushed away with.
+    hdPushback :: !Fx,
+    -- | Vertical speed given to an opponent hit in the air (negative is up).
+    hdAirLift :: !Fx
+  }
+  deriving (Eq, Show)
+
+-- | A light attack; adjust with record update syntax.
+hitDef :: HitDef
+hitDef =
+  HitDef
+    { hdDamage = 30,
+      hdHitStun = 12,
+      hdHitPause = 8,
+      hdPushback = 4,
+      hdAirLift = -4
+    }
+
+data Action
+  = ChangeState StateId
+  | ChangeAnim AnimId
+  | SetCtrl Bool
+  | -- | Set velocity; 'Nothing' keeps that component.
+    VelSet (Maybe (Expr Fx)) (Maybe (Expr Fx))
+  | VelAdd (Expr Fx) (Expr Fx)
+  | PosAdd (Expr Fx) (Expr Fx)
+  | SetVar Int (Expr Int)
+  | Attack HitDef
+  | -- | Face the other way.
+    Turn
+  deriving (Show)
+
+data Controller = Controller
+  { ctrlTrigger :: Expr Bool,
+    ctrlAction :: Action
+  }
+  deriving (Show)
+
+-- | @on trigger action@.
+on :: Expr Bool -> Action -> Controller
+on = Controller
+
+data StateDef = StateDef
+  { sdStance :: Stance,
+    sdMoveType :: MoveType,
+    sdPhysics :: Physics,
+    -- | Animation to switch to on entry.
+    sdAnim :: Maybe AnimId,
+    -- | Control flag to set on entry.
+    sdCtrl :: Maybe Bool,
+    -- | Velocity to set on entry.
+    sdVel :: Maybe (Fx, Fx),
+    sdControllers :: [Controller]
+  }
+  deriving (Show)
+
+-- | A state with nothing set on entry and no controllers.
+stateDef :: Stance -> MoveType -> Physics -> StateDef
+stateDef st mt ph = StateDef st mt ph Nothing Nothing Nothing []
+
+-- | Per-character numbers, like MUGEN's [Data], [Size] and [Velocity].
+data Consts = Consts
+  { cLife :: !Int,
+    cWalkFwd :: !Fx,
+    cWalkBack :: !Fx,
+    -- | Initial vertical speed of a jump (negative is up).
+    cJumpUp :: !Fx,
+    cJumpFwd :: !Fx,
+    cJumpBack :: !Fx,
+    cGravity :: !Fx,
+    -- | Velocity is multiplied by this every tick on the floor.
+    cStandFriction :: !Fx,
+    cCrouchFriction :: !Fx,
+    -- | Half the body width, used to keep fighters from overlapping.
+    cHalfWidth :: !Fx,
+    -- | Body height, used to let a jump clear the opponent.
+    cHeight :: !Fx,
+    -- | State entered when an airborne fighter touches the floor.
+    cLandState :: !StateId,
+    -- | State entered when hit standing or crouching.
+    cHitState :: !StateId,
+    -- | State entered when hit in the air.
+    cHitAirState :: !StateId,
+    -- | State entered at the start of a round.
+    cStartState :: !StateId
+  }
+  deriving (Eq, Show)
+
+-- | Numbers in the ballpark of a MUGEN character at 1 px = 1 unit, with
+-- the common state numbers of "Hugen.Common".
+defaultConsts :: Consts
+defaultConsts =
+  Consts
+    { cLife = 1000,
+      cWalkFwd = 2.4,
+      cWalkBack = -2.2,
+      cJumpUp = -8.4,
+      cJumpFwd = 2.5,
+      cJumpBack = -2.5,
+      cGravity = 0.44,
+      cStandFriction = 0.85,
+      cCrouchFriction = 0.82,
+      cHalfWidth = 16,
+      cHeight = 60,
+      cLandState = 52,
+      cHitState = 5000,
+      cHitAirState = 5030,
+      cStartState = 0
+    }
+
+data Character = Character
+  { charName :: String,
+    charConsts :: Consts,
+    charCommands :: [Command],
+    -- | MUGEN's state -1: runs every tick before the current state.
+    charGlobal :: [Controller],
+    charStates :: IntMap.IntMap StateDef,
+    charAnims :: IntMap.IntMap Anim
+  }
+
+lookupState :: Character -> StateId -> Maybe StateDef
+lookupState c n = IntMap.lookup n (charStates c)
+
+lookupAnim :: Character -> AnimId -> Maybe Anim
+lookupAnim c n = IntMap.lookup n (charAnims c)
+
+-- | Ticks of input history the character's commands need.
+historyTicks :: Character -> Int
+historyTicks c = 2 + maximum (0 : map need (charCommands c))
+  where
+    need k = cmdTime k + chordWindow + sum [n | Charge _ n <- cmdSteps k]
+
+-- | Problems in a definition: references to missing states or animations,
+-- empty animations. An empty list means the character is well formed.
+validate :: Character -> [String]
+validate c =
+  [ "state " ++ show n ++ " is used but not defined"
+  | n <- requiredStates ++ concatMap targets allControllers,
+    isNothing (lookupState c n)
+  ]
+    ++ [ "animation " ++ show a ++ " is used but not defined"
+       | a <- usedAnims,
+         isNothing (lookupAnim c a)
+       ]
+    ++ [ "animation " ++ show a ++ " has no frames"
+       | (a, an) <- IntMap.toList (charAnims c),
+         null (animFrames an)
+       ]
+  where
+    k = charConsts c
+    requiredStates = [cLandState k, cHitState k, cHitAirState k, cStartState k]
+    allControllers = charGlobal c ++ concatMap sdControllers (IntMap.elems (charStates c))
+    targets ctl = case ctrlAction ctl of
+      ChangeState n -> [n]
+      _ -> []
+    usedAnims =
+      mapMaybe sdAnim (IntMap.elems (charStates c))
+        ++ [a | ctl <- allControllers, ChangeAnim a <- [ctrlAction ctl]]
+
+changeState :: StateId -> Action
+changeState = ChangeState
+
+changeAnim :: AnimId -> Action
+changeAnim = ChangeAnim
+
+setCtrl :: Bool -> Action
+setCtrl = SetCtrl
+
+velSet :: Expr Fx -> Expr Fx -> Action
+velSet x y = VelSet (Just x) (Just y)
+
+velSetX, velSetY :: Expr Fx -> Action
+velSetX x = VelSet (Just x) Nothing
+velSetY y = VelSet Nothing (Just y)
+
+velAdd :: Expr Fx -> Expr Fx -> Action
+velAdd = VelAdd
+
+posAdd :: Expr Fx -> Expr Fx -> Action
+posAdd = PosAdd
+
+setVar :: Int -> Expr Int -> Action
+setVar = SetVar
+
+attack :: HitDef -> Action
+attack = Attack
+
+turn :: Action
+turn = Turn
