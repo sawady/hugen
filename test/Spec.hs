@@ -1,2 +1,10 @@
+module Main (main) where
+
+import qualified CoreSpec
+import qualified MatchSpec
+import Test.Hspec
+
 main :: IO ()
-main = putStrLn "Test suite not yet implemented"
+main = hspec $ do
+  CoreSpec.spec
+  MatchSpec.spec

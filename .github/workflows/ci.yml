@@ -1,0 +1,55 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install SDL2
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends libsdl2-dev libsdl2-image-dev pkg-config
+
+      - uses: haskell-actions/setup@v2
+        with:
+          ghc-version: "9.10.3"
+          enable-stack: true
+          stack-version: "latest"
+
+      - name: Use the GHC installed above
+        run: |
+          stack config set system-ghc --global true
+          stack config set install-ghc --global false
+
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.stack
+            .stack-work
+          key: stack-${{ runner.os }}-${{ hashFiles('stack.yaml', 'package.yaml') }}
+          restore-keys: stack-${{ runner.os }}-
+
+      - name: Build
+        run: stack build --test --no-run-tests
+
+      - name: Test
+        run: stack test --ta "--qc-max-success 500"
+
+      - name: Headless demo
+        run: stack exec hugen -- --headless
+
+      - name: Snapshot (SDL software renderer, no display)
+        env:
+          SDL_VIDEODRIVER: dummy
+        run: stack exec hugen -- --snapshot snapshot.bmp 44
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: snapshot
+          path: snapshot.bmp
