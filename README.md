@@ -1,6 +1,7 @@
 # Hugen
 
 [![CI](https://github.com/sawady/hugen/actions/workflows/ci.yml/badge.svg)](https://github.com/sawady/hugen/actions/workflows/ci.yml)
+[![Sponsor](https://img.shields.io/github/sponsors/sawady?label=Sponsor&logo=GitHub)](https://github.com/sponsors/sawady)
 
 A fighting game engine in Haskell and SDL2, inspired by the classic
 [MUGEN](https://en.wikipedia.org/wiki/Mugen_(game_engine)).
@@ -126,6 +127,11 @@ Towards a first playable version (0.1):
 
 Issues are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in
 [CHANGELOG.md](CHANGELOG.md).
+
+## Sponsoring
+
+Hugen is free software. If it is useful to you, you can support its development through
+[GitHub Sponsors](https://github.com/sponsors/sawady).
 
 ## License
 
