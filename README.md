@@ -1,5 +1,7 @@
 # Hugen
 
+[![CI](https://github.com/sawady/hugen/actions/workflows/ci.yml/badge.svg)](https://github.com/sawady/hugen/actions/workflows/ci.yml)
+
 A fighting game engine in Haskell and SDL2, inspired by the classic
 [MUGEN](https://en.wikipedia.org/wiki/Mugen_(game_engine)).
 
@@ -119,6 +121,11 @@ Towards a first playable version (0.1):
 - [ ] Sound effects
 - [ ] Replays: record, play back, use as regression tests
 - [ ] A small original cast
+
+## Contributing
+
+Issues are welcome; see [CONTRIBUTING.md](CONTRIBUTING.md). Changes are listed in
+[CHANGELOG.md](CHANGELOG.md).
 
 ## License
 
