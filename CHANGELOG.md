@@ -35,5 +35,7 @@ and this project adheres to the
 
 - The early sprite demo (`Game`, `Scene`) and its third-party sprite.
 - `resources/bg.png`, an unused background image of unknown origin.
+- Both images were also removed from the whole git history (2026-11-04); the repository
+  contains no third-party art.
 
 [Unreleased]: https://github.com/sawady/hugen/commits/main
