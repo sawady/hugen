@@ -343,8 +343,15 @@ A knockdown launches the defender with `hdAirLift`. The fall state lands in the 
 (`sdLandState`), which leads to getting up and then to standing. Both of those have the
 stance `Lying`, and the engine never lets an attack reach a fighter in that stance.
 
-**Proposed next:** attack priority and clashes, projectiles as helper entities with their
-own states, throws, juggle limits.
+### Juggle limit
+
+A fighter counts the hits it takes in the air: a hit on an airborne fighter, or a knockdown
+from the floor, adds one. Once the count reaches `cJuggleLimit` (3 by default, per
+character), attacks go through a fighter that is airborne and being hit, without damage,
+contact or hit pause. The count goes back to 0 on entering any state that is not an
+airborne reaction, which in practice means touching the floor.
+
+**Proposed next:** projectiles as helper entities with their own states, throws.
 
 ## 6. Camera (implemented)
 
@@ -397,7 +404,8 @@ code.
 - **Scenarios** with Blocky: walking, jumping and landing, whiffing, the jab → rush
   cancel, every attack connecting exactly once, hit pause, turning after a cross-up, KO;
   and one per combat rule: the guard table, guard stun to the tick, chip damage, cross-up
-  guards, reactions, the knockdown sequence, no hits on a fighter that is down.
+  guards, reactions, the knockdown sequence, no hits on a fighter that is down, the
+  juggle limit.
 - **Properties** over random inputs (QuickCheck):
   - determinism: the same inputs give the same match;
   - `step` is a fold: running a prefix and then the rest equals running everything (no
@@ -426,6 +434,10 @@ regression suite that any behavior change must update on purpose.
 - **Resolution and art style.** Logical 320x180, pixel art.
 - **Command timing.** A completed command stays in the buffer for 3 ticks
   (`cmdBuffer`), and a command has a window of 15 ticks (`cmdTime`).
+- **Clashes.** None. Two attacks that connect on the same tick both land (a trade).
+- **High attacks.** `HitHigh` misses a crouching fighter even if the boxes overlap.
+- **Guard details.** Chip damage can end the round, a guarded attack uses the same hit
+  pause and pushback as a hit, and there is no guarding in the air.
 
 ### Open
 
@@ -441,10 +453,5 @@ These need a decision from the maintainer; the code picks a default for each.
    (`ignorehitpause`). Hugen freezes them all and relies on the buffer. Enough?
 5. **Round flow.** Rounds, timer, intros and win poses as engine features or as states
    of a "system" character?
-6. **Clashes.** Two attacks that connect on the same tick both land (default: a trade).
-   Should some of them cancel out instead?
-7. **High attacks.** `HitHigh` misses a crouching fighter even if the boxes overlap
-   (default). Should that be left to the boxes alone, making it the same as `HitMid`?
-8. **Guard details.** Chip damage can end the round (default). A guarded attack uses the
-   same hit pause and pushback as a hit (default), or should they be separate fields?
-   Guarding in the air is not supported (default).
+6. **Juggle model.** Every air hit costs one and the limit is 3 per character (default),
+   or should each attack have its own cost?

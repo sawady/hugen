@@ -214,7 +214,9 @@ data Consts = Consts
     -- | State entered when guarding crouching.
     cGuardCrouchState :: !StateId,
     -- | State entered at the start of a round.
-    cStartState :: !StateId
+    cStartState :: !StateId,
+    -- | Hits a fighter can take before touching the floor again.
+    cJuggleLimit :: !Int
   }
   deriving (Eq, Show)
 
@@ -241,7 +243,8 @@ defaultConsts =
       cFallState = 5050,
       cGuardStandState = 150,
       cGuardCrouchState = 152,
-      cStartState = 0
+      cStartState = 0,
+      cJuggleLimit = 3
     }
 
 data Character = Character

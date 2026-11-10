@@ -29,6 +29,7 @@ and this project adheres to the
 - Reactions by strength (light, heavy, knockdown); falling, lying and getting up, with
   no hits on a fighter that is down.
 - Blocky's sweep (crouching B), a low attack that knocks down.
+- A juggle limit: a fighter takes a limited number of hits before touching the floor.
 
 ### Changed
 

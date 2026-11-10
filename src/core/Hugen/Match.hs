@@ -135,18 +135,24 @@ outcome p1 p2 = case (fLife p1 <= 0, fLife p2 <= 0) of
 data Impact = Impact !HitDef !(Maybe GuardHeight)
 
 -- | Does @a@'s active attack reach @d@ this tick? A fighter on the floor
--- cannot be hit, and a high attack passes over a crouching one. The pad is
--- the defender's, for its guard.
+-- cannot be hit, a high attack passes over a crouching one, and a fighter
+-- that has taken its limit of hits in the air cannot be hit until it lands.
+-- The pad is the defender's, for its guard.
 connects :: Character -> Fighter -> Character -> Pad -> Fighter -> Maybe Impact
 connects ca a cd p d = case fAttack a of
   Just h
     | not (fContact a)
         && fStance d /= Lying
         && not (hdLevel h == HitHigh && fStance d == Crouching)
+        && not juggledOut
         && anyOverlap (hitboxes ca a) (hurtboxes cd d) ->
         Just (Impact h (guardFor h))
   _ -> Nothing
   where
+    juggledOut =
+      fStance d == Airborne
+        && fMoveType d == BeingHit
+        && fJuggle d >= cJuggleLimit (charConsts cd)
     guardFor h = case guardAgainst cd p (fX a) d of
       Just g | guardBlocks (hdLevel h) g -> Just g
       _ -> Nothing
@@ -191,12 +197,14 @@ getHit c attackerFacing h d =
       fPause = max (fPause d) (hdHitPause h),
       fCtrl = False,
       fVX = pushAway attackerFacing h d,
-      fVY = if inAir || knocked then hdAirLift h else 0
+      fVY = if airborneAfter then hdAirLift h else 0,
+      fJuggle = if airborneAfter then fJuggle d + 1 else 0
     }
   where
     k = charConsts c
     inAir = fStance d == Airborne
     knocked = hdStrength h == HitKnockdown
+    airborneAfter = inAir || knocked
     reaction
       | knocked = cFallState k
       | inAir = cHitAirState k

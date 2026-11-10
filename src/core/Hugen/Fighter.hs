@@ -62,7 +62,9 @@ data Fighter = Fighter
     -- | Ticks left of hit stun or guard stun.
     fHitStun :: !Int,
     -- | Ticks left frozen in hit pause.
-    fPause :: !Int
+    fPause :: !Int,
+    -- | Hits taken in the air since the fighter last touched the floor.
+    fJuggle :: !Int
   }
   deriving (Eq, Show)
 
@@ -91,7 +93,8 @@ newFighter c facing x =
         fAttack = Nothing,
         fContact = False,
         fHitStun = 0,
-        fPause = 0
+        fPause = 0,
+        fJuggle = 0
       }
   where
     k = charConsts c
@@ -215,8 +218,9 @@ setAnim :: AnimId -> Fighter -> Fighter
 setAnim n f = f {fAnim = n, fAnimPos = startAnim}
 
 -- | Enter a state: reset its clock, apply what the state sets on entry and
--- drop the previous state's attack. An undefined state behaves as an empty
--- one ('validate' reports it).
+-- drop the previous state's attack. The juggle count only survives from one
+-- airborne reaction to another. An undefined state behaves as an empty one
+-- ('validate' reports it).
 enterState :: Character -> StateId -> Fighter -> Fighter
 enterState c n f = withVel . withCtrl . withAnim $ base
   where
@@ -230,7 +234,8 @@ enterState c n f = withVel . withCtrl . withAnim $ base
           fMoveType = sdMoveType sd,
           fPhysics = sdPhysics sd,
           fAttack = Nothing,
-          fContact = False
+          fContact = False,
+          fJuggle = if sdStance sd == Airborne && sdMoveType sd == BeingHit then fJuggle f else 0
         }
     withAnim g = maybe g (`setAnim` g) (sdAnim sd)
     withCtrl g = maybe g (\b -> g {fCtrl = b}) (sdCtrl sd)

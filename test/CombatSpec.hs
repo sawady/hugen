@@ -273,6 +273,54 @@ spec = describe "combat" $ do
       hasFallen (sweep back) `shouldBe` True
       hasFallen (sweep downBack) `shouldBe` False
 
+  describe "juggle limit" $ do
+    let juggled n c f = (enterState c stHitAir f {fY = -20}) {fJuggle = n}
+        limit = cJuggleLimit (charConsts blocky)
+
+    it "the last hit allowed connects and fills the count" $ do
+      let m = impactOn hitDef stand (juggled (limit - 1))
+      fContact (mP1 m) `shouldBe` True
+      fJuggle (mP2 m) `shouldBe` limit
+      fLife (mP2 m) `shouldBe` 1000 - hdDamage hitDef
+
+    it "once it is full attacks go through: no damage, no contact, no pause" $ do
+      let m = impactOn hitDef stand (juggled limit)
+      fContact (mP1 m) `shouldBe` False
+      fPause (mP1 m) `shouldBe` 0
+      fLife (mP2 m) `shouldBe` 1000
+
+    it "the first air hit on a jumping fighter counts as one" $
+      fJuggle (mP2 (impactOn hitDef stand (\c f -> enterState c stJumpAir f {fY = -20}))) `shouldBe` 1
+
+    it "a knockdown from the floor counts as one" $
+      fJuggle (mP2 (impactOn hitDef {hdStrength = HitKnockdown} stand (const id))) `shouldBe` 1
+
+    it "a hit on the floor does not count" $
+      fJuggle (mP2 (impactOn hitDef {hdStrength = HitHeavy} stand (const id))) `shouldBe` 0
+
+    it "a fighter held in the air takes exactly the limit, however long the attacks go on" $ do
+      let h = hitDef {hdHitPause = 0, hdPushback = 0}
+          md = kickDef h
+          pin = withP2 (\f -> f {fY = -20, fVY = 0})
+          swing x = step md (noInput, noInput) (pin (armedKick md x))
+          begin = pin (withP2 (\f -> enterState (mdP2 md) stJumpAir f) (newMatch md))
+          end = iterate swing begin !! 40
+      fLife (mP2 end) `shouldBe` 1000 - limit * hdDamage h
+      fJuggle (mP2 end) `shouldBe` limit
+
+    it "the limit is per character" $ do
+      let tough = blocky {charConsts = (charConsts blocky) {cJuggleLimit = 1}}
+          md = (kickDef hitDef) {mdP2 = tough}
+          m = step md (noInput, noInput) (armedKick md (withP2 (juggled 1 tough) (newMatch md)))
+      fLife (mP2 m) `shouldBe` 1000
+
+    it "touching the floor clears the count" $ do
+      let md = kickDef hitDef
+          m0 = withP2 (juggled limit (mdP2 md)) (newMatch md)
+          ms = run md m0 (replicate 60 (noInput, noInput))
+      fJuggle (mP2 (last ms)) `shouldBe` 0
+      fStance (mP2 (last ms)) `shouldBe` Standing
+
   describe "validation" $ do
     it "reports a missing guard or knockdown state" $
       validate blocky {charStates = IntMap.delete stGuardCrouch (charStates blocky)}
@@ -300,11 +348,13 @@ spec = describe "combat" $ do
         let a = simulate closeDef xs start
             m = simulate closeDef (mirrorInputs xs) start
             seen st = any (\t -> fState (mP1 t) == st || fState (mP2 t) == st) (ticks b)
+            juggled = any (\t -> fJuggle (mP1 t) > 0 || fJuggle (mP2 t) > 0) (ticks b)
          in cover 8 (seen stGuardStand) "standing guard" $
               cover 8 (seen stGuardCrouch) "crouching guard" $
                 cover 10 (seen stHitHeavy) "heavy reaction" $
                   cover 6 (seen stFall) "knockdown" $
                     cover 4 (seen stGetUp) "getting up" $
+                      cover 4 juggled "hit while in the air" $
                       (mP1 m, mP2 m, camX (mCamera m))
                         === (mirrorFighter (mP2 a), mirrorFighter (mP1 a), negate (camX (mCamera a)))
 
@@ -318,7 +368,7 @@ spec = describe "combat" $ do
            in (mP1 m, mP2 m, camX (mCamera m))
                 === (mirrorFighter (mP2 a), mirrorFighter (mP1 a), negate (camX (mCamera a)))
 
-    it "keeps life in range, fighters in the stage and lying fighters on the floor" $
+    it "keeps life in range, fighters in the stage, lying fighters on the floor and juggles within the limit" $
       property $ \b ->
         let st = mdStage closeDef
             ok f =
@@ -328,6 +378,9 @@ spec = describe "combat" $ do
                 && fX f <= stageRight st
                 && fY f <= 0
                 && (not (lying f) || fY f == 0)
+                && fJuggle f >= 0
+                && fJuggle f <= cJuggleLimit (charConsts blocky)
+                && (fJuggle f == 0 || (fStance f == Airborne && fMoveType f == BeingHit))
          in all (\t -> ok (mP1 t) && ok (mP2 t)) (ticks b)
 
     it "never hurts a fighter that stays on the floor" $
