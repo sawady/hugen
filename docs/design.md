@@ -453,5 +453,5 @@ These need a decision from the maintainer; the code picks a default for each.
    (`ignorehitpause`). Hugen freezes them all and relies on the buffer. Enough?
 5. **Round flow.** Rounds, timer, intros and win poses as engine features or as states
    of a "system" character?
-6. **Juggle model.** Every air hit costs one and the limit is 3 per character (default),
-   or should each attack have its own cost?
+6. **Juggle model.** Resolved: every air hit costs one and the limit is 3 per character.
+   Attacks have no individual cost.
