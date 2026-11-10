@@ -15,10 +15,12 @@
 -- 4. Space: bodies push each other apart; fighters stay inside the stage
 --    and the camera view.
 -- 5. Hits: every active attack is tested against the opponent's hurtboxes
---    on the same snapshot, so two attacks can trade.
+--    on the same snapshot, so two attacks can trade. This is also where a
+--    guard is checked, against this tick's pad.
 -- 6. Clocks: animation, state time and hit stun advance (or hit pause is
---    spent). Then the hits of step 5 are applied: damage, hit state, and a
---    hit pause that starts on the next tick.
+--    spent). Then the hits of step 5 are applied: damage and a hit state, or
+--    chip damage and a guard state, and a hit pause that starts on the next
+--    tick.
 -- 7. Facing: an idle fighter on the floor turns to face the opponent.
 -- 8. Camera and round end.
 module Hugen.Match
@@ -99,14 +101,14 @@ step md (pad1, pad2) m =
     -- 4. space
     (s1, s2) = separate st c1 c2 ph1 ph2
     -- 5. hits, both tested on the same snapshot
-    h12 = if over then Nothing else connects c1 s1 c2 s2
-    h21 = if over then Nothing else connects c2 s2 c1 s1
+    h12 = if over then Nothing else connects c1 s1 c2 in2 s2
+    h21 = if over then Nothing else connects c2 s2 c1 in1 s1
     -- 6. clocks; the hit is applied after them, so the tick of the impact
     -- still counts and the hit pause starts on the next one
     t1 = advance c1 s1
     t2 = advance c2 s2
-    hit1 = maybe id (getHit c1 (fFacing s2)) h21 . maybe id landHit h12 $ t1
-    hit2 = maybe id (getHit c2 (fFacing s1)) h12 . maybe id landHit h21 $ t2
+    hit1 = maybe id (receive c1 (fFacing s2)) h21 . maybe id landHit h12 $ t1
+    hit2 = maybe id (receive c2 (fFacing s1)) h12 . maybe id landHit h21 $ t2
     -- 7. facing
     p1f = autoTurn hit1 hit2
     p2f = autoTurn hit2 hit1
@@ -129,18 +131,58 @@ outcome p1 p2 = case (fLife p1 <= 0, fLife p2 <= 0) of
   (False, True) -> Just (Winner P1)
   _ -> Nothing
 
--- | Does @a@'s active attack hit @d@ this tick?
-connects :: Character -> Fighter -> Character -> Fighter -> Maybe HitDef
-connects ca a cd d = case fAttack a of
+-- | An attack that reaches its target, and the guard that stops it, if any.
+data Impact = Impact !HitDef !(Maybe GuardHeight)
+
+-- | Does @a@'s active attack reach @d@ this tick? A fighter on the floor
+-- cannot be hit, and a high attack passes over a crouching one. The pad is
+-- the defender's, for its guard.
+connects :: Character -> Fighter -> Character -> Pad -> Fighter -> Maybe Impact
+connects ca a cd p d = case fAttack a of
   Just h
-    | not (fContact a) && anyOverlap (hitboxes ca a) (hurtboxes cd d) -> Just h
+    | not (fContact a)
+        && fStance d /= Lying
+        && not (hdLevel h == HitHigh && fStance d == Crouching)
+        && anyOverlap (hitboxes ca a) (hurtboxes cd d) ->
+        Just (Impact h (guardFor h))
   _ -> Nothing
+  where
+    guardFor h = case guardAgainst cd p (fX a) d of
+      Just g | guardBlocks (hdLevel h) g -> Just g
+      _ -> Nothing
 
--- | The attacker's side of a hit: the attack is spent and both freeze.
-landHit :: HitDef -> Fighter -> Fighter
-landHit h a = a {fContact = True, fPause = max (fPause a) (hdHitPause h)}
+-- | The attacker's side of a hit or a guard: the attack is spent and both
+-- freeze.
+landHit :: Impact -> Fighter -> Fighter
+landHit (Impact h _) a = a {fContact = True, fPause = max (fPause a) (hdHitPause h)}
 
--- | The defender's side of a hit.
+-- | The defender's side of an impact.
+receive :: Character -> Facing -> Impact -> Fighter -> Fighter
+receive c attackerFacing (Impact h guard) d = case guard of
+  Just g -> guardHit c attackerFacing h g d
+  Nothing -> getHit c attackerFacing h d
+
+-- | Speed that pushes the defender away from the attacker, in the defender's
+-- relative terms.
+pushAway :: Facing -> HitDef -> Fighter -> Fx
+pushAway attackerFacing h d = hdPushback h * facingSign attackerFacing * facingSign (fFacing d)
+
+-- | A guarded attack: chip damage, guard stun, no reaction.
+guardHit :: Character -> Facing -> HitDef -> GuardHeight -> Fighter -> Fighter
+guardHit c attackerFacing h g d =
+  entered
+    { fLife = max 0 (fLife d - hdChip h),
+      fHitStun = hdGuardStun h,
+      fPause = max (fPause d) (hdHitPause h),
+      fCtrl = False,
+      fVX = pushAway attackerFacing h d,
+      fVY = 0
+    }
+  where
+    k = charConsts c
+    entered = enterState c (case g of GuardStanding -> cGuardStandState k; GuardCrouching -> cGuardCrouchState k) d
+
+-- | An attack that was not guarded.
 getHit :: Character -> Facing -> HitDef -> Fighter -> Fighter
 getHit c attackerFacing h d =
   entered
@@ -148,14 +190,19 @@ getHit c attackerFacing h d =
       fHitStun = hdHitStun h,
       fPause = max (fPause d) (hdHitPause h),
       fCtrl = False,
-      -- pushed away from the attacker, in the defender's relative terms
-      fVX = hdPushback h * facingSign attackerFacing * facingSign (fFacing d),
-      fVY = if inAir then hdAirLift h else 0
+      fVX = pushAway attackerFacing h d,
+      fVY = if inAir || knocked then hdAirLift h else 0
     }
   where
     k = charConsts c
     inAir = fStance d == Airborne
-    entered = enterState c (if inAir then cHitAirState k else cHitState k) d
+    knocked = hdStrength h == HitKnockdown
+    reaction
+      | knocked = cFallState k
+      | inAir = cHitAirState k
+      | hdStrength h == HitHeavy = cHitHeavyState k
+      | otherwise = cHitState k
+    entered = enterState c reaction d
 
 -- | Idle fighters on the floor turn to face the opponent. Attacking ones do
 -- not: a move that crosses the opponent keeps its direction.

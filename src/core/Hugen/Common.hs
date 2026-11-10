@@ -1,5 +1,5 @@
 -- | Common states every character can reuse: standing, walking, crouching,
--- jumping, landing and getting hit. The equivalent of MUGEN's
+-- jumping, landing, guarding, getting hit and being knocked down. The equivalent of MUGEN's
 -- @common1.cns@, with the same state numbers.
 --
 -- A character supplies the animations these states use ('commonAnims'
@@ -12,8 +12,14 @@ module Hugen.Common
     stJumpStart,
     stJumpAir,
     stLand,
+    stGuardStand,
+    stGuardCrouch,
     stHit,
+    stHitHeavy,
     stHitAir,
+    stFall,
+    stLie,
+    stGetUp,
 
     -- * Animation numbers
     anStand,
@@ -22,8 +28,14 @@ module Hugen.Common
     anJumpStart,
     anJumpAir,
     anLand,
+    anGuardStand,
+    anGuardCrouch,
     anHit,
+    anHitHeavy,
     anHitAir,
+    anFall,
+    anLie,
+    anGetUp,
     commonAnims,
 
     -- * States
@@ -31,6 +43,8 @@ module Hugen.Common
     attackState,
     jumpStartTicks,
     landTicks,
+    lieTicks,
+    getUpTicks,
   )
 where
 
@@ -40,29 +54,58 @@ import Hugen.Expr
 import Hugen.Fixed (Fx)
 import Hugen.Input (Dir (..))
 
-stStand, stCrouch, stWalk, stJumpStart, stJumpAir, stLand, stHit, stHitAir :: StateId
+stStand, stCrouch, stWalk, stJumpStart, stJumpAir, stLand, stGuardStand, stGuardCrouch :: StateId
+stHit, stHitHeavy, stHitAir, stFall, stLie, stGetUp :: StateId
 stStand = 0
 stCrouch = 11
 stWalk = 20
 stJumpStart = 40
 stJumpAir = 50
 stLand = 52
+stGuardStand = 150
+stGuardCrouch = 152
 stHit = 5000
+stHitHeavy = 5001
 stHitAir = 5030
+stFall = 5050
+stLie = 5110
+stGetUp = 5120
 
-anStand, anCrouch, anWalk, anJumpStart, anJumpAir, anLand, anHit, anHitAir :: AnimId
+anStand, anCrouch, anWalk, anJumpStart, anJumpAir, anLand, anGuardStand, anGuardCrouch :: AnimId
+anHit, anHitHeavy, anHitAir, anFall, anLie, anGetUp :: AnimId
 anStand = 0
 anCrouch = 11
 anWalk = 20
 anJumpStart = 40
 anJumpAir = 41
 anLand = 47
+anGuardStand = 150
+anGuardCrouch = 152
 anHit = 5000
+anHitHeavy = 5001
 anHitAir = 5030
+anFall = 5050
+anLie = 5110
+anGetUp = 5120
 
 -- | Animations the common states need.
 commonAnims :: [AnimId]
-commonAnims = [anStand, anCrouch, anWalk, anJumpStart, anJumpAir, anLand, anHit, anHitAir]
+commonAnims =
+  [ anStand,
+    anCrouch,
+    anWalk,
+    anJumpStart,
+    anJumpAir,
+    anLand,
+    anGuardStand,
+    anGuardCrouch,
+    anHit,
+    anHitHeavy,
+    anHitAir,
+    anFall,
+    anLie,
+    anGetUp
+  ]
 
 -- | Ticks on the floor before a jump leaves it.
 jumpStartTicks :: Int
@@ -71,6 +114,14 @@ jumpStartTicks = 3
 -- | Ticks of landing recovery.
 landTicks :: Int
 landTicks = 2
+
+-- | Ticks lying on the floor after a knockdown, before getting up.
+lieTicks :: Int
+lieTicks = 30
+
+-- | Ticks getting up. Still 'Lying': the fighter cannot be hit yet.
+getUpTicks :: Int
+getUpTicks = 20
 
 lit' :: Fx -> Expr Fx
 lit' = lit
@@ -139,9 +190,30 @@ commonStates k =
           sdControllers = [on (time .>= lit landTicks) (changeState stStand)]
         }
     ),
+    ( stGuardStand,
+      (stateDef Standing BeingHit PhysStand)
+        { sdAnim = Just anGuardStand,
+          sdCtrl = Just False,
+          sdControllers = [on hitOver (changeState stStand)]
+        }
+    ),
+    ( stGuardCrouch,
+      (stateDef Crouching BeingHit PhysCrouch)
+        { sdAnim = Just anGuardCrouch,
+          sdCtrl = Just False,
+          sdControllers = [on hitOver (changeState stCrouch)]
+        }
+    ),
     ( stHit,
       (stateDef Standing BeingHit PhysStand)
         { sdAnim = Just anHit,
+          sdCtrl = Just False,
+          sdControllers = [on hitOver (changeState stStand)]
+        }
+    ),
+    ( stHitHeavy,
+      (stateDef Standing BeingHit PhysStand)
+        { sdAnim = Just anHitHeavy,
           sdCtrl = Just False,
           sdControllers = [on hitOver (changeState stStand)]
         }
@@ -150,6 +222,28 @@ commonStates k =
       (stateDef Airborne BeingHit PhysAir)
         { sdAnim = Just anHitAir,
           sdCtrl = Just False
+        }
+    ),
+    ( stFall,
+      (stateDef Airborne BeingHit PhysAir)
+        { sdAnim = Just anFall,
+          sdCtrl = Just False,
+          sdLandState = Just stLie
+        }
+    ),
+    ( stLie,
+      (stateDef Lying BeingHit PhysStand)
+        { sdAnim = Just anLie,
+          sdCtrl = Just False,
+          sdVel = Just (0, 0),
+          sdControllers = [on (time .>= lit lieTicks) (changeState stGetUp)]
+        }
+    ),
+    ( stGetUp,
+      (stateDef Lying BeingHit PhysStand)
+        { sdAnim = Just anGetUp,
+          sdCtrl = Just False,
+          sdControllers = [on (time .>= lit getUpTicks) (changeState stStand)]
         }
     )
   ]

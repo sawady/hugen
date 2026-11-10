@@ -94,10 +94,12 @@ fighting game is a sequence of discrete frames, and so is Hugen.
    the push is symmetric); fighters are clamped to the stage and to the camera view;
    against a wall, only the other fighter moves.
 5. **Hits.** Every active attack is tested against the opponent's hurtboxes, both on
-   the same snapshot, so two attacks can **trade**.
+   the same snapshot, so two attacks can **trade**. The defender's guard is checked here,
+   against this tick's pad.
 6. **Clocks, then impact.** State time, animation and hit stun advance (or a tick of hit
-   pause is spent). Then the hits found in step 5 are applied: damage, the defender's
-   hit state, pushback, and a hit pause that starts on the *next* tick.
+   pause is spent). Then the hits found in step 5 are applied: damage and the defender's
+   hit state, or chip damage and its guard state; pushback; and a hit pause that starts
+   on the *next* tick.
 7. **Facing.** An idle fighter on the floor turns to face the opponent. A fighter in
    an attack does not: a move that crosses the opponent keeps its direction.
 8. **Camera and round end.**
@@ -205,6 +207,7 @@ As in MUGEN's CNS:
 data StateDef = StateDef
   { sdStance :: Stance, sdMoveType :: MoveType, sdPhysics :: Physics
   , sdAnim :: Maybe AnimId, sdCtrl :: Maybe Bool, sdVel :: Maybe (Fx, Fx)
+  , sdLandState :: Maybe StateId   -- instead of the character's land state
   , sdControllers :: [Controller] }
 
 data Controller = Controller { ctrlTrigger :: Expr Bool, ctrlAction :: Action }
@@ -266,9 +269,10 @@ also a feature: the set of things a character can observe is explicit.
 ### Common states
 
 `Hugen.Common` provides MUGEN's common states with their usual numbers: stand (0),
-crouch (11), walk (20), jump start (40), jump (50), land (52), hit (5000) and hit in
-the air (5030), plus `attackState`, a template for "play the animation, arm the hit on
-frame n, return to state m". A character reuses them and adds its moves.
+crouch (11), walk (20), jump start (40), jump (50), land (52), standing and crouching
+guard (150, 152), hit (5000), heavy hit (5001), hit in the air (5030), fall (5050), lying
+(5110) and getting up (5120), plus `attackState`, a template for "play the animation, arm
+the hit on frame n, return to state m". A character reuses them and adds its moves.
 
 ## 5. Animation and collision (implemented)
 
@@ -293,18 +297,54 @@ An attack is a `HitDef` made active by the `Attack` action:
 ```haskell
 data HitDef = HitDef
   { hdDamage :: Int, hdHitStun :: Int, hdHitPause :: Int
-  , hdPushback :: Fx, hdAirLift :: Fx }
+  , hdPushback :: Fx, hdAirLift :: Fx
+  , hdLevel :: HitLevel, hdStrength :: HitStrength
+  , hdChip :: Int, hdGuardStun :: Int }
 ```
 
 It connects at most once per activation (`fContact`), when any hitbox of the current
 frame overlaps any hurtbox of the opponent. On impact the attacker gets `moveContact`
-(for cancels) and both freeze for `hdHitPause` ticks; the defender takes damage, enters
-its hit state (standing or air), is pushed away from the attacker and stays in hit stun
-for `hdHitStun` ticks (`hitOver` tells when it ends).
+(for cancels, on a hit or a guard alike) and both freeze for `hdHitPause` ticks; the
+defender is pushed away from the attacker and takes the hit or guards it.
 
-**Proposed next:** guarding (holding back with control, with guard stun and chip
-damage per attack), hit heights (high / low / overhead), attack priority and clashes,
-projectiles as helper entities with their own states, throws, juggle limits.
+### Guarding
+
+A fighter guards by holding away from the attacker on the tick of the impact, on the
+floor, either idle with control or already in guard stun. Holding down as well makes it
+a crouching guard. The direction is read from the absolute pad against the attacker's
+position, not from the fighter's facing, so a cross-up has to be guarded the other way
+even before the fighter has turned. There is no guard in the air.
+
+A guarded attack costs `hdChip` life (which can end the round) and puts the defender in
+its guard state for `hdGuardStun` ticks. Being in guard stun does not stop it from
+guarding the next attack, or from changing height to do it. `hdStrength` has no effect
+through a guard: nobody is knocked down while guarding.
+
+Levels decide which guard works:
+
+| `hdLevel` | Standing guard | Crouching guard | Against a crouching fighter |
+|---|---|---|---|
+| `HitHigh` | yes | yes | misses, whatever the boxes say |
+| `HitMid` | yes | yes | hits |
+| `HitLow` | no | yes | hits |
+| `HitOverhead` | yes | no | hits |
+
+### Reactions and knockdown
+
+`hdStrength` picks the state an unguarded attack sends the defender to:
+
+| `hdStrength` | On the floor | In the air |
+|---|---|---|
+| `HitLight` | hit (`hdHitStun` ticks) | hit in the air |
+| `HitHeavy` | heavy hit (`hdHitStun` ticks) | hit in the air |
+| `HitKnockdown` | fall | fall |
+
+A knockdown launches the defender with `hdAirLift`. The fall state lands in the lying state
+(`sdLandState`), which leads to getting up and then to standing. Both of those have the
+stance `Lying`, and the engine never lets an attack reach a fighter in that stance.
+
+**Proposed next:** attack priority and clashes, projectiles as helper entities with their
+own states, throws, juggle limits.
 
 ## 6. Camera (implemented)
 
@@ -355,14 +395,18 @@ code.
   rule (sloppy input, timing, mirroring, charge, chords, buffer, hit pause), boxes,
   animation timing, `validate`.
 - **Scenarios** with Blocky: walking, jumping and landing, whiffing, the jab → rush
-  cancel, every attack connecting exactly once, hit pause, turning after a cross-up, KO.
+  cancel, every attack connecting exactly once, hit pause, turning after a cross-up, KO;
+  and one per combat rule: the guard table, guard stun to the tick, chip damage, cross-up
+  guards, reactions, the knockdown sequence, no hits on a fighter that is down.
 - **Properties** over random inputs (QuickCheck):
   - determinism: the same inputs give the same match;
   - `step` is a fold: running a prefix and then the rest equals running everything (no
     state lives outside `Match`);
   - **no side is favored**: the mirrored match (players swapped, left and right
     swapped) is exactly the mirror image of the original;
-  - invariants: life in range, fighters inside the stage and never below the floor.
+  - invariants: life in range, fighters inside the stage and never below the floor;
+  - the same properties over fights at close range, with coverage checks that make sure
+    those fights reach guards and knockdowns.
 - **Headless runs**: `hugen --headless` prints the scripted demo; `hugen --snapshot`
   draws a tick with SDL's software renderer (`SDL_VIDEODRIVER=dummy`), which CI uploads
   as an artifact.
@@ -397,3 +441,10 @@ These need a decision from the maintainer; the code picks a default for each.
    (`ignorehitpause`). Hugen freezes them all and relies on the buffer. Enough?
 5. **Round flow.** Rounds, timer, intros and win poses as engine features or as states
    of a "system" character?
+6. **Clashes.** Two attacks that connect on the same tick both land (default: a trade).
+   Should some of them cancel out instead?
+7. **High attacks.** `HitHigh` misses a crouching fighter even if the boxes overlap
+   (default). Should that be left to the boxes alone, making it the same as `HitMid`?
+8. **Guard details.** Chip damage can end the round (default). A guarded attack uses the
+   same hit pause and pushback as a hit (default), or should they be separate fields?
+   Guarding in the air is not supported (default).

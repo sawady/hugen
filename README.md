@@ -17,7 +17,8 @@ A fighting game engine in Haskell and SDL2, inspired by the classic
   machine. That makes it testable without a window and ready for replays.
 
 **Status: work in progress.** The core works (states, triggers, commands with an input
-buffer, hitboxes and hurtboxes, hit pause, camera) and there is a training room with a
+buffer, hitboxes and hurtboxes, hit pause, guarding, hit levels, knockdowns, camera) and
+there is a training room with a
 placeholder character drawn with rectangles. There are no sprites, sound, rounds or
 menus yet. APIs will change.
 
@@ -61,9 +62,10 @@ SDL_VIDEODRIVER=dummy stack exec hugen -- --snapshot demo.bmp 44
 | F5 | Reset |
 | Escape | Quit |
 
-The test character, Blocky, has a jab (A), a kick (B), a crouching jab, a jump attack,
-a forward dash (→ →), a rush (↓ ↘ → + A, also as a cancel from a jab that hits) and an
-uppercut (→ ↓ ↘ + B). Player 2 is a dummy that stands still.
+The test character, Blocky, has a jab (A), a kick (B), a crouching jab, a sweep (↓ + B),
+a jump attack, a forward dash (→ →), a rush (↓ ↘ → + A, also as a cancel from a jab that
+hits) and an uppercut (→ ↓ ↘ + B). Player 2 is a dummy that stands still, so guarding is
+covered by the tests but cannot be tried in the room yet.
 
 ## How it fits together
 
@@ -113,7 +115,7 @@ Towards a first playable version (0.1):
 - [x] Hitboxes, hurtboxes, hit pause, hit stun, pushback
 - [x] Camera and screen edges
 - [x] Training room with a placeholder character; CI
-- [ ] Guarding, chip damage, high and low attacks
+- [x] Guarding, chip damage, high and low attacks, knockdowns
 - [ ] Projectiles (helper entities with their own states)
 - [ ] Throws
 - [ ] Rounds, timer, KO and win states

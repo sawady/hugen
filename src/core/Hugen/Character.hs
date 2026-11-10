@@ -14,6 +14,10 @@
 module Hugen.Character
   ( StateId,
     Physics (..),
+    HitLevel (..),
+    HitStrength (..),
+    GuardHeight (..),
+    guardBlocks,
     HitDef (..),
     hitDef,
     Action (..),
@@ -65,6 +69,36 @@ data Physics
     PhysNone
   deriving (Eq, Ord, Show, Enum, Bounded)
 
+-- | Where an attack lands, which decides how it can be guarded.
+data HitLevel
+  = -- | Misses a crouching fighter altogether, whatever its boxes say.
+    -- Either guard stops it.
+    HitHigh
+  | -- | Either guard stops it.
+    HitMid
+  | -- | Only a crouching guard stops it.
+    HitLow
+  | -- | Only a standing guard stops it.
+    HitOverhead
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+-- | How an unguarded attack throws the opponent around.
+data HitStrength
+  = HitLight
+  | HitHeavy
+  | -- | The opponent falls, lies on the floor and gets up.
+    HitKnockdown
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+data GuardHeight = GuardStanding | GuardCrouching
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+-- | Does this guard stop an attack of this level?
+guardBlocks :: HitLevel -> GuardHeight -> Bool
+guardBlocks HitLow GuardStanding = False
+guardBlocks HitOverhead GuardCrouching = False
+guardBlocks _ _ = True
+
 -- | An attack, made active by the 'Attack' action (MUGEN's HitDef). It
 -- connects at most once, when a hitbox of the current frame overlaps a
 -- hurtbox of the opponent.
@@ -76,8 +110,15 @@ data HitDef = HitDef
     hdHitPause :: !Int,
     -- | Speed the opponent is pushed away with.
     hdPushback :: !Fx,
-    -- | Vertical speed given to an opponent hit in the air (negative is up).
-    hdAirLift :: !Fx
+    -- | Vertical speed given to an opponent hit in the air or knocked down
+    -- (negative is up).
+    hdAirLift :: !Fx,
+    hdLevel :: !HitLevel,
+    hdStrength :: !HitStrength,
+    -- | Damage dealt through a guard.
+    hdChip :: !Int,
+    -- | Ticks the opponent stays in its guard state.
+    hdGuardStun :: !Int
   }
   deriving (Eq, Show)
 
@@ -89,7 +130,11 @@ hitDef =
       hdHitStun = 12,
       hdHitPause = 8,
       hdPushback = 4,
-      hdAirLift = -4
+      hdAirLift = -4,
+      hdLevel = HitMid,
+      hdStrength = HitLight,
+      hdChip = 0,
+      hdGuardStun = 10
     }
 
 data Action
@@ -126,13 +171,16 @@ data StateDef = StateDef
     sdCtrl :: Maybe Bool,
     -- | Velocity to set on entry.
     sdVel :: Maybe (Fx, Fx),
+    -- | State entered on touching the floor, instead of the character's
+    -- land state.
+    sdLandState :: Maybe StateId,
     sdControllers :: [Controller]
   }
   deriving (Show)
 
 -- | A state with nothing set on entry and no controllers.
 stateDef :: Stance -> MoveType -> Physics -> StateDef
-stateDef st mt ph = StateDef st mt ph Nothing Nothing Nothing []
+stateDef st mt ph = StateDef st mt ph Nothing Nothing Nothing Nothing []
 
 -- | Per-character numbers, like MUGEN's [Data], [Size] and [Velocity].
 data Consts = Consts
@@ -153,10 +201,18 @@ data Consts = Consts
     cHeight :: !Fx,
     -- | State entered when an airborne fighter touches the floor.
     cLandState :: !StateId,
-    -- | State entered when hit standing or crouching.
+    -- | State entered when hit lightly, standing or crouching.
     cHitState :: !StateId,
+    -- | State entered when hit hard, standing or crouching.
+    cHitHeavyState :: !StateId,
     -- | State entered when hit in the air.
     cHitAirState :: !StateId,
+    -- | State entered when knocked down, from the floor or from the air.
+    cFallState :: !StateId,
+    -- | State entered when guarding standing.
+    cGuardStandState :: !StateId,
+    -- | State entered when guarding crouching.
+    cGuardCrouchState :: !StateId,
     -- | State entered at the start of a round.
     cStartState :: !StateId
   }
@@ -180,7 +236,11 @@ defaultConsts =
       cHeight = 60,
       cLandState = 52,
       cHitState = 5000,
+      cHitHeavyState = 5001,
       cHitAirState = 5030,
+      cFallState = 5050,
+      cGuardStandState = 150,
+      cGuardCrouchState = 152,
       cStartState = 0
     }
 
@@ -211,7 +271,7 @@ historyTicks c = 2 + maximum (0 : map need (charCommands c))
 validate :: Character -> [String]
 validate c =
   [ "state " ++ show n ++ " is used but not defined"
-  | n <- requiredStates ++ concatMap targets allControllers,
+  | n <- requiredStates ++ concatMap targets allControllers ++ landStates,
     isNothing (lookupState c n)
   ]
     ++ [ "animation " ++ show a ++ " is used but not defined"
@@ -224,7 +284,17 @@ validate c =
        ]
   where
     k = charConsts c
-    requiredStates = [cLandState k, cHitState k, cHitAirState k, cStartState k]
+    requiredStates =
+      [ cLandState k,
+        cHitState k,
+        cHitHeavyState k,
+        cHitAirState k,
+        cFallState k,
+        cGuardStandState k,
+        cGuardCrouchState k,
+        cStartState k
+      ]
+    landStates = mapMaybe sdLandState (IntMap.elems (charStates c))
     allControllers = charGlobal c ++ concatMap sdControllers (IntMap.elems (charStates c))
     targets ctl = case ctrlAction ctl of
       ChangeState n -> [n]

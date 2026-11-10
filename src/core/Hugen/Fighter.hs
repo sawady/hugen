@@ -19,10 +19,12 @@ module Hugen.Fighter
     hitboxes,
     currentSprite,
     isBehind,
+    guardAgainst,
   )
 where
 
 import qualified Data.IntMap.Strict as IntMap
+import Data.Maybe (fromMaybe)
 import Hugen.Anim
 import Hugen.Box
 import Hugen.Character
@@ -57,6 +59,7 @@ data Fighter = Fighter
     fAttack :: !(Maybe HitDef),
     -- | Did that attack connect?
     fContact :: !Bool,
+    -- | Ticks left of hit stun or guard stun.
     fHitStun :: !Int,
     -- | Ticks left frozen in hit pause.
     fPause :: !Int
@@ -245,10 +248,11 @@ physics c f
       PhysNone -> moved
       PhysAir
         | fY moved >= 0 && fVY f > 0 ->
-            enterState c (cLandState k) moved {fY = 0, fVX = 0, fVY = 0}
+            enterState c landing moved {fY = 0, fVX = 0, fVY = 0}
         | otherwise -> moved {fVY = fVY f + cGravity k}
   where
     k = charConsts c
+    landing = fromMaybe (cLandState k) (lookupState c (fState f) >>= sdLandState)
     moved =
       f
         { fX = fX f + fVX f * facingSign (fFacing f),
@@ -283,3 +287,24 @@ currentSprite c f = frameSprite <$> currentFrameOf c f
 -- | Is the opponent behind the fighter?
 isBehind :: Fighter -> Fighter -> Bool
 isBehind self opp = (fX opp - fX self) * facingSign (fFacing self) < 0
+
+-- | The guard a fighter holds this tick against an attacker at @attackerX@,
+-- given the pad of this tick. It takes holding away from the attacker, on
+-- the floor, either with control and idle or already in guard stun (which is
+-- how a guard is kept up, and switched high or low, during a string of
+-- attacks). The pad is absolute and read against the attacker's position, so
+-- a cross-up has to be guarded the other way before the fighter has turned.
+guardAgainst :: Character -> Pad -> Fx -> Fighter -> Maybe GuardHeight
+guardAgainst c p attackerX f
+  | able && dirHas dir Back = Just (if dirHas dir Down then GuardCrouching else GuardStanding)
+  | otherwise = Nothing
+  where
+    k = charConsts c
+    dir = riDir (relative toward p)
+    toward = case compare attackerX (fX f) of
+      GT -> FacingRight
+      LT -> FacingLeft
+      EQ -> fFacing f
+    onFloor = fStance f == Standing || fStance f == Crouching
+    inGuardStun = fState f == cGuardStandState k || fState f == cGuardCrouchState k
+    able = onFloor && ((fCtrl f && fMoveType f == Idle) || inGuardStun)

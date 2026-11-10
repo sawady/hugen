@@ -23,6 +23,12 @@ and this project adheres to the
 - CI on GitHub Actions: build, tests, headless demo and a snapshot as an artifact.
 - Window settings (title and size) read from `resources/config.ini`.
 - `CONTRIBUTING.md`.
+- Guarding: hold away from the attacker, standing or crouching, with guard stun and chip
+  damage per attack.
+- Hit levels (high, mid, low, overhead) that decide which guard stops an attack.
+- Reactions by strength (light, heavy, knockdown); falling, lying and getting up, with
+  no hits on a fighter that is down.
+- Blocky's sweep (crouching B), a low attack that knocks down.
 
 ### Changed
 
@@ -30,6 +36,7 @@ and this project adheres to the
 - The SDL code moved to `src/shell` and is driven by a fixed-rate loop (60 ticks per
   second) over the core.
 - README rewritten in English with status, usage and roadmap; license holder filled in.
+- Copyright years updated to 2024–2026.
 
 ### Removed
 
