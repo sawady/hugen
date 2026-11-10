@@ -355,8 +355,7 @@ spec = describe "combat" $ do
                   cover 6 (seen stFall) "knockdown" $
                     cover 4 (seen stGetUp) "getting up" $
                       cover 4 juggled "hit while in the air" $
-                      (mP1 m, mP2 m, camX (mCamera m))
-                        === (mirrorFighter (mP2 a), mirrorFighter (mP1 a), negate (camX (mCamera a)))
+                        m `isMirrorOf` a
 
     it "favors no side with any attack" $
       property $
@@ -365,8 +364,7 @@ spec = describe "combat" $ do
               s0 = newMatch md
               a = simulate md xs s0
               m = simulate md (mirrorInputs xs) s0
-           in (mP1 m, mP2 m, camX (mCamera m))
-                === (mirrorFighter (mP2 a), mirrorFighter (mP1 a), negate (camX (mCamera a)))
+           in m `isMirrorOf` a
 
     it "keeps life in range, fighters in the stage, lying fighters on the floor and juggles within the limit" $
       property $ \b ->

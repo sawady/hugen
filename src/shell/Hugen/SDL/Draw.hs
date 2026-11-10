@@ -43,9 +43,12 @@ drawMatch r showBoxes md (art1, art2) m = do
   drawEdges r (mdStage md) cam
   drawFighter r cam art1 (mdP1 md) (palette P1) (mP1 m)
   drawFighter r cam art2 (mdP2 md) (palette P2) (mP2 m)
+  forM_ (mEntities m) $ \e ->
+    drawFighter r cam (artOf (eOwner e)) (charOf (eOwner e)) (palette (eOwner e)) (eBody e)
   when showBoxes $ do
     drawBoxes r cam (mdP1 md) (mP1 m)
     drawBoxes r cam (mdP2 md) (mP2 m)
+    forM_ (mEntities m) $ \e -> drawBoxes r cam (charOf (eOwner e)) (eBody e)
   drawLife r P1 (mdP1 md) (mP1 m)
   drawLife r P2 (mdP2 md) (mP2 m)
   case mOutcome m of
@@ -53,6 +56,10 @@ drawMatch r showBoxes md (art1, art2) m = do
     Just _ -> fill r (V4 240 220 80 255) (screenWidth `div` 2 - 20, 30, 40, 6)
   where
     cam = mCamera m
+    artOf P1 = art1
+    artOf P2 = art2
+    charOf P1 = mdP1 md
+    charOf P2 = mdP2 md
 
 palette :: Side -> Role -> Color
 palette side role = case (side, role) of

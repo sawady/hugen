@@ -17,9 +17,9 @@ A fighting game engine in Haskell and SDL2, inspired by the classic
   machine. That makes it testable without a window and ready for replays.
 
 **Status: work in progress.** The core works (states, triggers, commands with an input
-buffer, hitboxes and hurtboxes, hit pause, guarding, hit levels, knockdowns, camera) and
-there is a training room with a
-placeholder character drawn with rectangles. There are no sprites, sound, rounds or
+buffer, hitboxes and hurtboxes, hit pause, guarding, hit levels, knockdowns, helper
+entities and projectiles, camera) and there is a training room with a placeholder
+character drawn with rectangles. There are no sprites, sound, rounds or
 menus yet. APIs will change.
 
 ![The training room: player 1 lands a jab, hitboxes in red, hurtboxes in blue](docs/training-room.png)
@@ -64,7 +64,7 @@ SDL_VIDEODRIVER=dummy stack exec hugen -- --snapshot demo.bmp 44
 
 The test character, Blocky, has a jab (A), a kick (B), a crouching jab, a sweep (↓ + B),
 a jump attack, a forward dash (→ →), a rush (↓ ↘ → + A, also as a cancel from a jab that
-hits) and an uppercut (→ ↓ ↘ + B). Player 2 is a dummy that stands still, so guarding is
+hits), an uppercut (→ ↓ ↘ + B) and a fireball (↓ ↙ ← + A). Player 2 is a dummy that stands still, so guarding is
 covered by the tests but cannot be tried in the room yet.
 
 ## How it fits together
@@ -79,7 +79,7 @@ src/core/   hugen-core: the pure simulation (depends on base and containers only
   Hugen/Anim.hs       animations with collision boxes per frame
   Hugen/Box.hs        boxes and overlap
   Hugen/Fighter.hs    a fighter during a match, the trigger evaluator
-  Hugen/Match.hs      the tick: step and simulate
+  Hugen/Match.hs      the tick: step and simulate; helpers and projectiles
   Hugen/Camera.hs     stage and camera
   Hugen/Common.hs     common states (stand, walk, jump, hit...)
   Hugen/Example/      Blocky, the test character, and a scripted demo
@@ -116,7 +116,7 @@ Towards a first playable version (0.1):
 - [x] Camera and screen edges
 - [x] Training room with a placeholder character; CI
 - [x] Guarding, chip damage, high and low attacks, knockdowns
-- [ ] Projectiles (helper entities with their own states)
+- [x] Projectiles (helper entities with their own states)
 - [ ] Throws
 - [ ] Rounds, timer, KO and win states
 - [ ] Sprites from sprite sheets; animation and box data files

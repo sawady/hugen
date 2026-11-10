@@ -60,10 +60,12 @@ Inside `hugen-core`:
 2. **No clock.** Time is the tick number and per-state tick counters.
 3. **No randomness**, until there is a seeded PRNG stored in the match state.
 4. **No hidden state.** Everything that changes is in `Match`: positions, states,
-   animation positions, life, the input history and the command buffer. `Match` has
-   `Eq` and `Show`.
+   animation positions, life, the input history, the command buffer and the entities.
+   `Match` has `Eq` and `Show`.
 5. **Multiplication and division round toward zero**, so that negation commutes with
    them and the engine is exactly mirror-symmetric (a property test checks it).
+6. **No unordered collections in gameplay.** Entities are a list in creation order,
+   not a `Map`; every phase of the tick visits them in that order.
 
 ### The real-time loop
 
@@ -85,24 +87,27 @@ fighting game is a sequence of discrete frames, and so is Hugen.
 1. **Input.** Each fighter appends this tick's pad, made facing-relative, to its input
    history; commands that complete now enter its command buffer.
 2. **Controllers.** Each fighter runs its global controllers and then those of its
-   current state (section 4). Both read the *opponent as it was before this phase*:
-   player 1 is not processed "first".
+   current state (section 4); each entity (section 5) runs its state. All of them read
+   the *opponent as it was before this phase*: player 1 is not processed "first".
 3. **Physics.** Velocity is applied; then friction (standing, crouching) or gravity
    (airborne). An airborne fighter that reaches the floor while falling lands and
    enters its land state.
 4. **Space.** Bodies push each other apart (each one half the overlap, rounded up so
    the push is symmetric); fighters are clamped to the stage and to the camera view;
-   against a wall, only the other fighter moves.
-5. **Hits.** Every active attack is tested against the opponent's hurtboxes, both on
-   the same snapshot, so two attacks can **trade**. The defender's guard is checked here,
-   against this tick's pad.
+   against a wall, only the other fighter moves. Entities are not pushed or clamped.
+5. **Hits.** Every active attack, of a fighter or of an entity, is tested against the
+   opposing fighter's hurtboxes, all on the same snapshot, so attacks can **trade**. The
+   defender's guard is checked here, against this tick's pad. Opposing projectiles that
+   touch cancel out, on the same snapshot.
 6. **Clocks, then impact.** State time, animation and hit stun advance (or a tick of hit
    pause is spent). Then the hits found in step 5 are applied: damage and the defender's
    hit state, or chip damage and its guard state; pushback; and a hit pause that starts
    on the *next* tick.
 7. **Facing.** An idle fighter on the floor turns to face the opponent. A fighter in
    an attack does not: a move that crosses the opponent keeps its direction.
-8. **Camera and round end.**
+8. **Camera, entities and round end.** Entities that destroyed themselves, and
+   projectiles that connected, cancelled out or left the view, are removed. The entities
+   created in step 2 are added at the end of the list, to act from the next tick.
 
 Two details in this order came from bugs found by tests:
 
@@ -217,6 +222,7 @@ data Action
   | VelSet (Maybe (Expr Fx)) (Maybe (Expr Fx)) | VelAdd (Expr Fx) (Expr Fx)
   | PosAdd (Expr Fx) (Expr Fx) | SetVar Int (Expr Int)
   | Attack HitDef | Turn
+  | Spawn EntityDef | DestroySelf   -- section 5, helpers and projectiles
 ```
 
 **`ChangeState` runs the new state on the same tick.** The rest of the current list is
@@ -351,7 +357,54 @@ character), attacks go through a fighter that is airborne and being hit, without
 contact or hit pause. The count goes back to 0 on entering any state that is not an
 airborne reaction, which in practice means touching the floor.
 
-**Proposed next:** projectiles as helper entities with their own states, throws.
+### Helpers and projectiles
+
+Besides the two fighters, a `Match` holds a list of **entities** (MUGEN's helpers and
+projectiles):
+
+```haskell
+data Entity = Entity { eId :: Int, eOwner :: Side, eKind :: EntityKind, eBody :: Fighter }
+data EntityKind = Helper | Projectile
+data EntityDef = EntityDef { edKind :: EntityKind, edState :: StateId, edOffset :: (Fx, Fx) }
+
+on (animElemStarts 1) (spawnProjectile stFireball 30 (-46))   -- Blocky's throw
+```
+
+- **An entity is a fighter without input.** Its body is a `Fighter` running states of
+  its owner's character: the same `StateDef`s, controllers, animations and boxes, so a
+  fireball is written like any other state. It runs only its state's controllers, never
+  the global ones (which turn commands into moves), and is not pushed by bodies or held
+  inside the view.
+- **Creation.** The `Spawn` action creates one at an offset from the spawner's axis
+  (x forward, so it mirrors with the facing), facing the same way. It is added at the
+  end of the tick and acts from the next one. A side can have at most
+  `maxEntitiesPerSide` (32) entities; more spawns do nothing.
+- **Order.** Entities live in a list ordered by `eId`, a counter in the match that is
+  never reused. Every phase visits them in that order; when both sides create entities
+  on the same tick, player 1's are created first. No rule depends on ids across sides,
+  which is what keeps the mirror property exact (the mirrored match numbers the two
+  sides' entities differently, and the test compares each side's list without ids).
+- **Attacks.** An entity's active attack is tested against the owner's opponent, like a
+  fighter's, with every rule of this section: guard (read against the entity's
+  position, so a projectile from behind is guarded the other way), levels, reactions,
+  juggle limit. It never hits its owner's side, and fighters' attacks do not hit
+  entities. The defender freezes for the hit pause; the owner does not. A helper that
+  connects freezes itself; entities are not frozen by the fighters' hit pause.
+- **Projectiles** are helpers that are also removed when their attack connects (hit or
+  guard), when their hitboxes touch those of a projectile of the other side (both are
+  removed, there is no priority), and when their axis leaves the view by more than
+  `stageOffscreenMargin`. A **helper** stays until it runs `DestroySelf`.
+- **Several hits on one tick.** A fighter can now be reached by several attacks on the
+  same tick: its opponent's first, then the opponent's entities in id order. All are
+  decided on the snapshot, except the juggle count, which accumulates: once the earlier
+  hits fill it, the later ones go through without contact (a projectile that goes
+  through is not spent).
+
+Blocky's fireball (↓ ↙ ← + A) is the example: the throw creates the projectile on its
+second frame, and the projectile's state sets its speed and arms a mid attack with chip
+damage.
+
+**Proposed next:** throws.
 
 ## 6. Camera (implemented)
 
@@ -384,9 +437,9 @@ data Character = Character
   , charAnims :: IntMap Anim }           -- the AIR
 ```
 
-`Hugen.Example.Blocky` is the reference: the common states, three normals, an air
-attack, a dash, a rush special and an uppercut, all drawn with rectangles generated by
-code.
+`Hugen.Example.Blocky` is the reference: the common states, four normals, an air
+attack, a dash, a rush special, an uppercut and a fireball, all drawn with rectangles
+generated by code.
 
 **The plan is layered** (see section 9 for what is decided):
 
@@ -405,7 +458,9 @@ code.
   cancel, every attack connecting exactly once, hit pause, turning after a cross-up, KO;
   and one per combat rule: the guard table, guard stun to the tick, chip damage, cross-up
   guards, reactions, the knockdown sequence, no hits on a fighter that is down, the
-  juggle limit.
+  juggle limit; and one per entity rule: where a projectile appears and how it flies,
+  hitting and guarding from a distance, cancelling out, leaving the view, ids, the cap,
+  helpers that hit and destroy themselves, several hits on one tick.
 - **Properties** over random inputs (QuickCheck):
   - determinism: the same inputs give the same match;
   - `step` is a fold: running a prefix and then the rest equals running everything (no
@@ -414,7 +469,13 @@ code.
     swapped) is exactly the mirror image of the original;
   - invariants: life in range, fighters inside the stage and never below the floor;
   - the same properties over fights at close range, with coverage checks that make sure
-    those fights reach guards and knockdowns.
+    those fights reach guards and knockdowns, and over fights full of fireballs, with
+    coverage of each way a projectile ends (hit, guard, cancel, leaving the view);
+  - entity invariants: creation order, ids under the counter, the cap, projectiles near
+    the view.
+- **Mutation checks.** Each rule was broken on purpose once (a projectile that is not
+  spent, entities that hit their own side, reused ids, offsets that ignore facing...)
+  to confirm that some test fails.
 - **Headless runs**: `hugen --headless` prints the scripted demo; `hugen --snapshot`
   draws a tick with SDL's software renderer (`SDL_VIDEODRIVER=dummy`), which CI uploads
   as an artifact.
@@ -455,3 +516,10 @@ These need a decision from the maintainer; the code picks a default for each.
    of a "system" character?
 6. **Juggle model.** Resolved: every air hit costs one and the limit is 3 per character.
    Attacks have no individual cost.
+7. **Entities.** Defaults taken with the simplest rule, all easy to change: fighters
+   cannot hit entities; projectiles cancel out one for one with no priority or
+   durability; a projectile that cancels out on the tick it reaches the opponent still
+   hits (same snapshot); entities keep moving while the fighters are in hit pause;
+   "leaving the view" is only horizontal; at most 32 entities per side; no trigger yet
+   to count one's own projectiles (MUGEN's `NumProj`), so nothing stops a second
+   fireball once the first one's throw has recovered.

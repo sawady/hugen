@@ -11,7 +11,9 @@ module Hugen.Fighter
     newFighter,
     eval,
     feedInput,
+    Effect (..),
     think,
+    thinkEntity,
     enterState,
     physics,
     advance,
@@ -164,33 +166,61 @@ feedInput c p f = f {fHistory = h, fBuffer = buf}
     h = recordInput (relative (fFacing f) p) (fHistory f)
     buf = updateBuffer (fPause f > 0) (recognize (charCommands c) h) (fBuffer f)
 
+-- | What running the controllers asks of the match, besides changing the
+-- fighter itself.
+data Effect
+  = -- | Create an entity, with the facing and position (in stage
+    -- coordinates) it gets.
+    SpawnAt !EntityDef !Facing !(Fx, Fx)
+  | -- | Remove the entity that ran the controller.
+    RemoveSelf
+  deriving (Eq, Show)
+
 -- | Run the global controllers and then the current state's controllers.
 -- A state change stops the list it happens in and runs the new state on
 -- the same tick, at most 'maxChanges' times per tick so that two states
--- that jump to each other cannot hang the engine.
-think :: Character -> Fighter -> Fighter -> Fighter
-think c opp f0
-  | fPause f0 > 0 = f0
-  | otherwise = case run (charGlobal c) f0 of
-      Changed f -> inState (maxChanges - 1) f
-      Continue f -> inState maxChanges f
-  where
-    inState :: Int -> Fighter -> Fighter
-    inState budget f
-      | budget <= 0 = f
-      | otherwise = case run (stateControllers f) f of
-          Changed f' -> inState (budget - 1) f'
-          Continue f' -> f'
-    stateControllers f = maybe [] sdControllers (lookupState c (fState f))
-    run :: [Controller] -> Fighter -> Flow
-    run [] f = Continue f
-    run (k : ks) f
-      | eval c f opp (ctrlTrigger k) = case ctrlAction k of
-          ChangeState n -> Changed (enterState c n f)
-          a -> run ks (perform c opp a f)
-      | otherwise = run ks f
+-- that jump to each other cannot hang the engine. The effects come out in
+-- the order their controllers ran.
+think :: Character -> Fighter -> Fighter -> (Fighter, [Effect])
+think c = thinkWith (charGlobal c) c
 
-data Flow = Continue Fighter | Changed Fighter
+-- | 'think' for an entity: only its state's controllers run, never the
+-- character's global ones (which turn commands into moves).
+thinkEntity :: Character -> Fighter -> Fighter -> (Fighter, [Effect])
+thinkEntity = thinkWith []
+
+thinkWith :: [Controller] -> Character -> Fighter -> Fighter -> (Fighter, [Effect])
+thinkWith global c opp f0
+  | fPause f0 > 0 = (f0, [])
+  | otherwise = case run global f0 [] of
+      Changed f es -> inState (maxChanges - 1) f es
+      Continue f es -> inState maxChanges f es
+  where
+    inState :: Int -> Fighter -> [Effect] -> (Fighter, [Effect])
+    inState budget f es
+      | budget <= 0 = (f, reverse es)
+      | otherwise = case run (stateControllers f) f es of
+          Changed f' es' -> inState (budget - 1) f' es'
+          Continue f' es' -> (f', reverse es')
+    stateControllers f = maybe [] sdControllers (lookupState c (fState f))
+    -- effects are accumulated in reverse
+    run :: [Controller] -> Fighter -> [Effect] -> Flow
+    run [] f es = Continue f es
+    run (k : ks) f es
+      | eval c f opp (ctrlTrigger k) = case ctrlAction k of
+          ChangeState n -> Changed (enterState c n f) es
+          Spawn d -> run ks f (spawnFrom d f : es)
+          DestroySelf -> run ks f (RemoveSelf : es)
+          a -> run ks (perform c opp a f) es
+      | otherwise = run ks f es
+
+data Flow = Continue Fighter [Effect] | Changed Fighter [Effect]
+
+-- | Where an entity appears: its offset is relative to the spawner's facing.
+spawnFrom :: EntityDef -> Fighter -> Effect
+spawnFrom d f = SpawnAt d (fFacing f) (fX f + dx * facingSign (fFacing f), fY f + dy)
+  where
+    (dx, dy) = edOffset d
 
 maxChanges :: Int
 maxChanges = 8
@@ -210,6 +240,9 @@ perform c opp a f = case a of
   SetVar n e -> f {fVars = IntMap.insert n (ev e) (fVars f)}
   Attack h -> f {fAttack = Just h, fContact = False}
   Turn -> f {fFacing = flipFacing (fFacing f)}
+  -- handled by 'think', which reports them as effects
+  Spawn _ -> f
+  DestroySelf -> f
   where
     ev :: Expr b -> b
     ev = eval c f opp

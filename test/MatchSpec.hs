@@ -59,7 +59,9 @@ spec = do
 
     it "every attack in the demo connects exactly once" $ do
       let m = simulate demoDef demoScript start
-      fLife (mP2 m) `shouldBe` 1000 - 30 - 90 - 50 - 110
+      fLife (mP2 m) `shouldBe` 1000 - 30 - 90 - 50 - 110 - hdDamage fireballHit
+      mNextId m `shouldBe` 1
+      mEntities m `shouldBe` []
 
     it "freezes both fighters on impact" $ do
       let ticks = scanl (flip (step demoDef)) start (zip comboScript (repeat noInput))
@@ -92,10 +94,7 @@ spec = do
 
     it "favors no side: the mirrored match is the mirror image" $
       property $ \(Inputs xs) ->
-        let a = simulate demoDef xs start
-            b = simulate demoDef (mirrorInputs xs) start
-         in (mP1 b, mP2 b, camX (mCamera b))
-              === (mirrorFighter (mP2 a), mirrorFighter (mP1 a), negate (camX (mCamera a)))
+        simulate demoDef (mirrorInputs xs) start `isMirrorOf` simulate demoDef xs start
 
     it "keeps life in range and fighters inside the stage and above the floor" $
       property $ \i ->

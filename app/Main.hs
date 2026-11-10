@@ -46,8 +46,12 @@ summary m =
     ++ fighter (mP1 m)
     ++ " | P2 "
     ++ fighter (mP2 m)
+    ++ entities
     ++ maybe "" ((" | " ++) . show) (mOutcome m)
   where
+    entities = case length (mEntities m) of
+      0 -> ""
+      n -> " | " ++ show n ++ (if n == 1 then " entity" else " entities")
     fighter f =
       "state "
         ++ pad 4 (show (fState f))

@@ -4,17 +4,23 @@
 module Gen
   ( Inputs (..),
     Brawl (..),
+    Barrage (..),
     genPad,
     genHitDef,
     mirrorFighter,
+    isMirrorOf,
+    sideEntities,
+    fireballMotion,
   )
 where
 
 import Hugen.Box
-import Hugen.Character (HitDef (..), hitDef)
+import Hugen.Camera (Camera (..))
+import Hugen.Character (EntityKind, HitDef (..), hitDef)
 import Hugen.Fighter (Fighter (..))
 import Hugen.Fixed
 import Hugen.Input
+import Hugen.Match
 import Test.QuickCheck
 
 instance Arbitrary Fx where
@@ -141,3 +147,65 @@ genHitDef = do
 -- | The same fighter on the other side of a stage centered on 0.
 mirrorFighter :: Fighter -> Fighter
 mirrorFighter f = f {fX = negate (fX f), fFacing = flipFacing (fFacing f)}
+
+-- | A side's entities in creation order, without their ids.
+sideEntities :: Side -> Match -> [(EntityKind, Fighter)]
+sideEntities s m = [(eKind e, eBody e) | e <- mEntities m, eOwner e == s]
+
+-- | @b `isMirrorOf` a@: the fighters swapped and reflected, the camera
+-- reflected, and each side's entities those of the other side, reflected and
+-- in the same order. Ids are left out on purpose: when both sides create an
+-- entity on the same tick, player 1's gets the lower id, so ids interleave
+-- differently in the mirrored match. Nothing else may depend on them.
+isMirrorOf :: Match -> Match -> Property
+isMirrorOf b a =
+  (mP1 b, mP2 b, camX (mCamera b), sideEntities P1 b, sideEntities P2 b, mNextId b)
+    === ( mirrorFighter (mP2 a),
+          mirrorFighter (mP1 a),
+          negate (camX (mCamera a)),
+          map mirrorE (sideEntities P2 a),
+          map mirrorE (sideEntities P1 a),
+          mNextId a
+        )
+  where
+    mirrorE (k, f) = (k, mirrorFighter f)
+
+-- | Blocky's fireball motion (down, down-back, back + A) for a fighter whose
+-- back is the given key.
+fireballMotion :: Button -> [Pad]
+fireballMotion backKey =
+  concat [replicate 2 (pad [KDown]), replicate 2 (pad [KDown, backKey]), [pad [backKey, KA]]]
+
+-- | Input for two fighters at the usual distance that throw fireballs at
+-- each other: often one at a time, sometimes both at once, with walking,
+-- jumping, guarding and attacking in between.
+newtype Barrage = Barrage [(Pad, Pad)]
+
+instance Show Barrage where
+  show (Barrage xs) = "Barrage (" ++ show (length xs) ++ " ticks) " ++ show (take 40 xs)
+
+instance Arbitrary Barrage where
+  arbitrary = do
+    n <- choose (1, 30)
+    Barrage . concat <$> vectorOf n segment
+    where
+      segment =
+        frequency
+          [ (3, throwBy True),
+            (3, throwBy False),
+            (1, pure (zip (fireballMotion KLeft) (fireballMotion KRight))),
+            (4, held genBrawlPad),
+            (1, held (elements [pad [KUp], pad [KUp, KLeft], pad [KUp, KRight]]))
+          ]
+      -- the other side holds a pad meanwhile
+      throwBy p1 = do
+        other <- genBrawlPad
+        wait <- choose (0, 20)
+        let motion = fireballMotion (if p1 then KLeft else KRight) ++ replicate wait noInput
+        pure (if p1 then zip motion (repeat other) else zip (repeat other) motion)
+      held g = do
+        len <- choose (1, 16)
+        p1 <- g
+        p2 <- g
+        pure (replicate len (p1, p2))
+  shrink (Barrage xs) = Barrage <$> shrinkList (const []) xs

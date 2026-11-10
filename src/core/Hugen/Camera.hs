@@ -10,6 +10,7 @@ module Hugen.Camera
     Camera (..),
     cameraFor,
     viewBounds,
+    insideView,
   )
 where
 
@@ -23,7 +24,10 @@ data Stage = Stage
     -- | How close to the edge of the view a fighter's axis may get.
     stageEdgeMargin :: !Fx,
     -- | Distance between the fighters' axes at the start of a round.
-    stageStartDistance :: !Fx
+    stageStartDistance :: !Fx,
+    -- | How far past the edge of the view a projectile's axis may go before
+    -- the projectile is removed.
+    stageOffscreenMargin :: !Fx
   }
   deriving (Eq, Show)
 
@@ -35,7 +39,8 @@ defaultStage =
       stageRight = 320,
       stageViewWidth = 320,
       stageEdgeMargin = 16,
-      stageStartDistance = 140
+      stageStartDistance = 140,
+      stageOffscreenMargin = 32
     }
 
 stageCenter :: Stage -> Fx
@@ -70,3 +75,9 @@ viewBounds st cam = (max (stageLeft st) l, min (stageRight st) r)
     m = stageEdgeMargin st
     l = camX cam - half + m
     r = camX cam + half - m
+
+-- | Is this x within the visible area widened by @margin@ on each side?
+insideView :: Stage -> Camera -> Fx -> Fx -> Bool
+insideView st cam margin x = x >= camX cam - half - margin && x <= camX cam + half + margin
+  where
+    half = halve (stageViewWidth st)

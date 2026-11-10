@@ -103,6 +103,7 @@ test-suite hugen-test
   other-modules:
       CombatSpec
       CoreSpec
+      EntitySpec
       Gen
       MatchSpec
       Paths_hugen

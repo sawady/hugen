@@ -20,6 +20,8 @@ module Hugen.Character
     guardBlocks,
     HitDef (..),
     hitDef,
+    EntityKind (..),
+    EntityDef (..),
     Action (..),
     Controller (..),
     on,
@@ -45,6 +47,9 @@ module Hugen.Character
     setVar,
     attack,
     turn,
+    spawnHelper,
+    spawnProjectile,
+    destroySelf,
   )
 where
 
@@ -137,6 +142,27 @@ hitDef =
       hdGuardStun = 10
     }
 
+-- | What an entity created by 'Spawn' is. Either kind runs its own states
+-- (from its owner's character) and its attacks hit the owner's opponent.
+data EntityKind
+  = -- | Lives until it destroys itself with 'DestroySelf'.
+    Helper
+  | -- | Like a helper, but also destroyed when its attack connects (hit or
+    -- guard), when its hitboxes touch those of an opposing projectile, and
+    -- when it leaves the view.
+    Projectile
+  deriving (Eq, Ord, Show, Enum, Bounded)
+
+-- | An entity to create (MUGEN's Helper and Projectile controllers).
+data EntityDef = EntityDef
+  { edKind :: !EntityKind,
+    -- | State the entity starts in, one of its owner's states.
+    edState :: !StateId,
+    -- | Where it appears, relative to the spawner's axis: x forward, y down.
+    edOffset :: !(Fx, Fx)
+  }
+  deriving (Eq, Show)
+
 data Action
   = ChangeState StateId
   | ChangeAnim AnimId
@@ -149,6 +175,12 @@ data Action
   | Attack HitDef
   | -- | Face the other way.
     Turn
+  | -- | Create an entity. It faces the way the spawner faces and starts
+    -- acting on the next tick.
+    Spawn EntityDef
+  | -- | Remove the entity running this controller at the end of the tick.
+    -- A fighter ignores it.
+    DestroySelf
   deriving (Show)
 
 data Controller = Controller
@@ -301,6 +333,7 @@ validate c =
     allControllers = charGlobal c ++ concatMap sdControllers (IntMap.elems (charStates c))
     targets ctl = case ctrlAction ctl of
       ChangeState n -> [n]
+      Spawn d -> [edState d]
       _ -> []
     usedAnims =
       mapMaybe sdAnim (IntMap.elems (charStates c))
@@ -336,3 +369,16 @@ attack = Attack
 
 turn :: Action
 turn = Turn
+
+-- | Create a helper in the given state, at an offset from the spawner's axis
+-- (x forward, y down).
+spawnHelper :: StateId -> Fx -> Fx -> Action
+spawnHelper st dx dy = Spawn (EntityDef Helper st (dx, dy))
+
+-- | Create a projectile in the given state, at an offset from the spawner's
+-- axis (x forward, y down).
+spawnProjectile :: StateId -> Fx -> Fx -> Action
+spawnProjectile st dx dy = Spawn (EntityDef Projectile st (dx, dy))
+
+destroySelf :: Action
+destroySelf = DestroySelf

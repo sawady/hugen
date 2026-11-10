@@ -30,6 +30,11 @@ and this project adheres to the
   no hits on a fighter that is down.
 - Blocky's sweep (crouching B), a low attack that knocks down.
 - A juggle limit: a fighter takes a limited number of hits before touching the floor.
+- Helpers and projectiles: entities created with the `Spawn` action that run states of
+  their owner's character and whose attacks hit the opponent. A projectile is removed
+  when it connects, when it touches an opposing projectile and when it leaves the view;
+  a helper when it runs `DestroySelf`. Entities are kept in creation order.
+- Blocky's fireball (↓ ↙ ← + A), also at the end of the scripted demo.
 
 ### Changed
 
