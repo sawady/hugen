@@ -13,7 +13,7 @@ homepage:       https://github.com/sawady/hugen#readme
 bug-reports:    https://github.com/sawady/hugen/issues
 author:         Federico Sawady
 maintainer:     Federico Sawady
-copyright:      2024 Federico Sawady
+copyright:      2024–2026 Federico Sawady
 license:        BSD-3-Clause
 license-file:   LICENSE
 build-type:     Simple

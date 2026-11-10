@@ -4,7 +4,7 @@ github: "sawady/hugen"
 license: BSD-3-Clause
 author: "Federico Sawady"
 maintainer: "Federico Sawady"
-copyright: "2024 Federico Sawady"
+copyright: "2024–2026 Federico Sawady"
 synopsis: A fighting game engine inspired by MUGEN, written in Haskell
 category: Game
 
