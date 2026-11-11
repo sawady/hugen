@@ -18,7 +18,7 @@ A fighting game engine in Haskell and SDL2, inspired by the classic
 
 **Status: work in progress.** The core works (states, triggers, commands with an input
 buffer, hitboxes and hurtboxes, hit pause, guarding, hit levels, knockdowns, helper
-entities and projectiles, camera) and there is a training room with a placeholder
+entities and projectiles, throws, camera) and there is a training room with a placeholder
 character drawn with rectangles. There are no sprites, sound, rounds or
 menus yet. APIs will change.
 
@@ -56,7 +56,7 @@ SDL_VIDEODRIVER=dummy stack exec hugen -- --snapshot demo.bmp 44
 | Key | Button |
 |---|---|
 | Arrows | Move, jump, crouch |
-| Z, X, C | A, B, C |
+| Z, X, C | A, B, C (throw) |
 | A, S, D | X, Y, Z |
 | F1 | Show or hide collision boxes |
 | F5 | Reset |
@@ -64,8 +64,9 @@ SDL_VIDEODRIVER=dummy stack exec hugen -- --snapshot demo.bmp 44
 
 The test character, Blocky, has a jab (A), a kick (B), a crouching jab, a sweep (↓ + B),
 a jump attack, a forward dash (→ →), a rush (↓ ↘ → + A, also as a cancel from a jab that
-hits), an uppercut (→ ↓ ↘ + B) and a fireball (↓ ↙ ← + A). Player 2 is a dummy that stands still, so guarding is
-covered by the tests but cannot be tried in the room yet.
+hits), an uppercut (→ ↓ ↘ + B), a fireball (↓ ↙ ← + A) and a throw (C, up close; pressing
+C while held escapes it). Player 2 is a dummy that stands still, so guarding and escaping
+a throw are covered by the tests but cannot be tried in the room yet.
 
 ## How it fits together
 
@@ -79,7 +80,7 @@ src/core/   hugen-core: the pure simulation (depends on base and containers only
   Hugen/Anim.hs       animations with collision boxes per frame
   Hugen/Box.hs        boxes and overlap
   Hugen/Fighter.hs    a fighter during a match, the trigger evaluator
-  Hugen/Match.hs      the tick: step and simulate; helpers and projectiles
+  Hugen/Match.hs      the tick: step and simulate; helpers, projectiles and throws
   Hugen/Camera.hs     stage and camera
   Hugen/Common.hs     common states (stand, walk, jump, hit...)
   Hugen/Example/      Blocky, the test character, and a scripted demo
@@ -117,7 +118,7 @@ Towards a first playable version (0.1):
 - [x] Training room with a placeholder character; CI
 - [x] Guarding, chip damage, high and low attacks, knockdowns
 - [x] Projectiles (helper entities with their own states)
-- [ ] Throws
+- [x] Throws
 - [ ] Rounds, timer, KO and win states
 - [ ] Sprites from sprite sheets; animation and box data files
 - [ ] Two players on one keyboard or with gamepads

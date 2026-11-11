@@ -5,8 +5,10 @@ module Gen
   ( Inputs (..),
     Brawl (..),
     Barrage (..),
+    Grapple (..),
     genPad,
     genHitDef,
+    genThrowDef,
     mirrorFighter,
     isMirrorOf,
     sideEntities,
@@ -16,7 +18,7 @@ where
 
 import Hugen.Box
 import Hugen.Camera (Camera (..))
-import Hugen.Character (EntityKind, HitDef (..), hitDef)
+import Hugen.Character (EntityKind, HitDef (..), ThrowDef (..), hitDef, throwDef)
 import Hugen.Fighter (Fighter (..))
 import Hugen.Fixed
 import Hugen.Input
@@ -143,6 +145,76 @@ genHitDef = do
         hdChip = chip,
         hdGuardStun = guardStun
       }
+
+-- | Any throw that goes on to the given state.
+genThrowDef :: Int -> Gen ThrowDef
+genThrowDef st = do
+  damage <- choose (0, 200)
+  holdTicks <- choose (1, 40)
+  escape <- choose (0, 40)
+  ox <- fromPixels <$> choose (-40, 40)
+  oy <- fromPixels <$> choose (-40, 10)
+  lx <- fromPixels <$> choose (-6, 6)
+  ly <- fromPixels <$> choose (-8, 0)
+  pure
+    (throwDef st)
+      { tdDamage = damage,
+        tdHold = holdTicks,
+        tdEscape = escape,
+        tdOffset = (ox, oy),
+        tdLaunch = (lx, ly)
+      }
+
+-- | Input for two fighters that start in range of a throw: throws, often
+-- answered by the other side pressing throw a few ticks later (an escape,
+-- in or out of the window), with guarding, crouching, attacks and steps in
+-- between.
+newtype Grapple = Grapple [(Pad, Pad)]
+
+instance Show Grapple where
+  show (Grapple xs) = "Grapple (" ++ show (length xs) ++ " ticks) " ++ show (take 40 xs)
+
+instance Arbitrary Grapple where
+  arbitrary = do
+    n <- choose (1, 30)
+    Grapple . concat <$> vectorOf n segment
+    where
+      segment =
+        frequency
+          [ (4, throwBy True),
+            (4, throwBy False),
+            (1, pure [(pad [KC], pad [KC])]),
+            (4, held)
+          ]
+      -- one side throws; the other holds a pad and may press throw later
+      throwBy p1 = do
+        other <- genGrapplePad
+        answer <- frequency [(1, pure Nothing), (2, Just <$> choose (0, 14))]
+        wait <- choose (0, 30)
+        let thrower = pad [KC] : replicate (15 + wait) noInput
+            defender = case answer of
+              Nothing -> replicate (length thrower) other
+              Just k -> take (length thrower) (replicate k other ++ [pad [KC]] ++ repeat other)
+        pure (if p1 then zip thrower defender else zip defender thrower)
+      held = do
+        len <- choose (1, 12)
+        p1 <- genGrapplePad
+        p2 <- genGrapplePad
+        pure (replicate len (p1, p2))
+
+genGrapplePad :: Gen Pad
+genGrapplePad =
+  frequency
+    [ (3, pure noInput),
+      (2, pure (pad [KLeft])),
+      (2, pure (pad [KRight])),
+      (2, pure (pad [KDown, KLeft])),
+      (2, pure (pad [KDown, KRight])),
+      (1, pure (pad [KUp])),
+      (2, pure (pad [KA])),
+      (2, pure (pad [KB])),
+      (2, pure (pad [KC]))
+    ]
 
 -- | The same fighter on the other side of a stage centered on 0.
 mirrorFighter :: Fighter -> Fighter

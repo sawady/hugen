@@ -1,5 +1,6 @@
 -- | Common states every character can reuse: standing, walking, crouching,
--- jumping, landing, guarding, getting hit and being knocked down. The equivalent of MUGEN's
+-- jumping, landing, guarding, getting hit, being knocked down and being
+-- held by a throw. The equivalent of MUGEN's
 -- @common1.cns@, with the same state numbers.
 --
 -- A character supplies the animations these states use ('commonAnims'
@@ -20,6 +21,7 @@ module Hugen.Common
     stFall,
     stLie,
     stGetUp,
+    stHeld,
 
     -- * Animation numbers
     anStand,
@@ -36,6 +38,7 @@ module Hugen.Common
     anFall,
     anLie,
     anGetUp,
+    anHeld,
     commonAnims,
 
     -- * States
@@ -55,7 +58,7 @@ import Hugen.Fixed (Fx)
 import Hugen.Input (Dir (..))
 
 stStand, stCrouch, stWalk, stJumpStart, stJumpAir, stLand, stGuardStand, stGuardCrouch :: StateId
-stHit, stHitHeavy, stHitAir, stFall, stLie, stGetUp :: StateId
+stHit, stHitHeavy, stHitAir, stFall, stLie, stGetUp, stHeld :: StateId
 stStand = 0
 stCrouch = 11
 stWalk = 20
@@ -70,9 +73,10 @@ stHitAir = 5030
 stFall = 5050
 stLie = 5110
 stGetUp = 5120
+stHeld = 5300
 
 anStand, anCrouch, anWalk, anJumpStart, anJumpAir, anLand, anGuardStand, anGuardCrouch :: AnimId
-anHit, anHitHeavy, anHitAir, anFall, anLie, anGetUp :: AnimId
+anHit, anHitHeavy, anHitAir, anFall, anLie, anGetUp, anHeld :: AnimId
 anStand = 0
 anCrouch = 11
 anWalk = 20
@@ -87,6 +91,7 @@ anHitAir = 5030
 anFall = 5050
 anLie = 5110
 anGetUp = 5120
+anHeld = 5300
 
 -- | Animations the common states need.
 commonAnims :: [AnimId]
@@ -104,7 +109,8 @@ commonAnims =
     anHitAir,
     anFall,
     anLie,
-    anGetUp
+    anGetUp,
+    anHeld
   ]
 
 -- | Ticks on the floor before a jump leaves it.
@@ -244,6 +250,15 @@ commonStates k =
         { sdAnim = Just anGetUp,
           sdCtrl = Just False,
           sdControllers = [on (time .>= lit getUpTicks) (changeState stStand)]
+        }
+    ),
+    -- the engine keeps the fighter here, bound to the thrower, until the
+    -- throw lands or is escaped
+    ( stHeld,
+      (stateDef Standing BeingHit PhysNone)
+        { sdAnim = Just anHeld,
+          sdCtrl = Just False,
+          sdVel = Just (0, 0)
         }
     )
   ]

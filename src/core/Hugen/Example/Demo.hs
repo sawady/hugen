@@ -37,8 +37,9 @@ comboScript =
       (60, noInput)
     ]
 
--- | The combo, then a jump-in air punch, an uppercut and a fireball thrown
--- after stepping back; player 2 stands still.
+-- | The combo, then a jump-in air punch, an uppercut, a fireball thrown
+-- after stepping back and a throw after walking in again; player 2 stands
+-- still.
 demoScript :: [(Pad, Pad)]
 demoScript = zip p1 (repeat noInput)
   where
@@ -61,5 +62,8 @@ demoScript = zip p1 (repeat noInput)
             (2, pad [KDown]),
             (2, pad [KDown, KLeft]),
             (1, pad [KLeft, KA]),
-            (60, noInput)
+            (60, noInput),
+            (30, pad [KRight]),
+            (1, pad [KC]),
+            (100, noInput)
           ]

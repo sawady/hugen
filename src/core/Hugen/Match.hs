@@ -19,15 +19,20 @@
 --    before this phase, so neither player gets to act first.
 -- 3. Physics: velocity, friction, gravity, landing.
 -- 4. Space: bodies push each other apart; fighters stay inside the stage
---    and the camera view. Entities are not pushed or held back.
--- 5. Hits: every active attack, of a fighter or of an entity, is tested
---    against the opposing fighter's hurtboxes on the same snapshot, so
---    attacks can trade. This is also where a guard is checked, against this
---    tick's pad, and where opposing projectiles that touch cancel out.
+--    and the camera view. Entities are not pushed or held back, and neither
+--    are a thrower and the fighter it holds.
+-- 5. Hits: throws first. A throw that connects, or a hold in progress,
+--    keeps every attack off both fighters this tick. Then every active
+--    attack, of a fighter or of an entity, is tested against the opposing
+--    fighter's hurtboxes on the same snapshot, so attacks can trade. This is
+--    also where a guard is checked, against this tick's pad, and where
+--    opposing projectiles that touch cancel out.
 -- 6. Clocks: animation, state time and hit stun advance (or hit pause is
 --    spent). Then the hits of step 5 are applied: damage and a hit state, or
 --    chip damage and a guard state, and a hit pause that starts on the next
---    tick.
+--    tick. Then throws: one that connected holds the opponent; a hold in
+--    progress is escaped, lands or goes on, and the held fighter is put
+--    where the thrower holds it.
 -- 7. Facing: an idle fighter on the floor turns to face the opponent.
 -- 8. Camera and round end. Entities that destroyed themselves, projectiles
 --    that connected, cancelled out or left the view are removed; the
@@ -39,6 +44,8 @@ module Hugen.Match
     MatchDef (..),
     Entity (..),
     maxEntitiesPerSide,
+    throwEscapeStun,
+    throwEscapePush,
     Match (..),
     newMatch,
     step,
@@ -47,10 +54,11 @@ module Hugen.Match
   )
 where
 
-import Data.Maybe (mapMaybe)
+import Data.Maybe (isJust, mapMaybe)
 import Hugen.Box
 import Hugen.Camera
 import Hugen.Character
+import Hugen.Command (isActive)
 import Hugen.Expr (MoveType (..), Stance (..))
 import Hugen.Fighter
 import Hugen.Fixed
@@ -89,6 +97,14 @@ data Entity = Entity
 -- helper that keeps spawning cannot grow the match without bound.
 maxEntitiesPerSide :: Int
 maxEntitiesPerSide = 32
+
+-- | Ticks both fighters spend in their hit state after a throw is escaped.
+throwEscapeStun :: Int
+throwEscapeStun = 12
+
+-- | Speed both fighters are pushed apart with when a throw is escaped.
+throwEscapePush :: Fx
+throwEscapePush = 4
 
 data Match = Match
   { mTick :: !Int,
@@ -153,12 +169,19 @@ step md (pad1, pad2) m =
     moved = [e {eBody = physics (charOf (eOwner e)) (eBody e)} | (e, _) <- thought]
     -- 4. space
     (s1, s2) = separate st c1 c2 ph1 ph2
-    -- 5. hits, all tested on the same snapshot
-    h12 = if over then Nothing else connects c1 s1 c2 in2 s2
-    h21 = if over then Nothing else connects c2 s2 c1 in1 s1
+    -- 5. hits, all tested on the same snapshot. Throws first: two on the
+    -- same tick both miss, and one that connects, or a hold in progress,
+    -- keeps every attack off both fighters.
+    (grab12, grab21) = case (grabs c1 s1 c2 s2, grabs c2 s2 c1 s1) of
+      _ | over -> (Nothing, Nothing)
+      (Just _, Just _) -> (Nothing, Nothing)
+      gs -> gs
+    locked = over || isJust grab12 || isJust grab21 || inHold s1 || inHold s2
+    h12 = if locked then Nothing else connects c1 s1 c2 in2 s2
+    h21 = if locked then Nothing else connects c2 s2 c1 in1 s1
     entityHits =
       [ (eOwner e, (ByEntity (eId e), i))
-      | not over,
+      | not locked,
         e <- moved,
         let o = eOwner e,
         Just i <- [connects (charOf o) (eBody e) (charOf (otherSide o)) (bySide o in2 in1) (bySide o s2 s1)]
@@ -174,6 +197,8 @@ step md (pad1, pad2) m =
     t2 = advance c2 s2
     hit1 = receiveAll c1 on1 (maybe id landHit (lookup ByFighter on2) t1)
     hit2 = receiveAll c2 on2 (maybe id landHit (lookup ByFighter on1) t2)
+    -- then throws: the one that connected, or the hold in progress
+    (thrown1, thrown2) = throws st c1 c2 grab12 grab21 (hit1, hit2)
     -- a projectile that connects is spent; a helper freezes like a fighter
     afterImpact e = case lookup (ByEntity (eId e)) (on1 ++ on2) of
       Nothing -> Just e
@@ -182,8 +207,8 @@ step md (pad1, pad2) m =
         | otherwise -> Just e {eBody = landHit i (eBody e)}
     ticked = [e {eBody = advance (charOf (eOwner e)) (eBody e)} | e <- moved]
     -- 7. facing
-    p1f = autoTurn hit1 hit2
-    p2f = autoTurn hit2 hit1
+    p1f = autoTurn thrown1 thrown2
+    p2f = autoTurn thrown2 thrown1
     -- 8. camera, then the entities that leave and the ones that arrive
     camF = cameraFor st (fX p1f, fY p1f) (fX p2f, fY p2f)
     selfRemoved = [eId e | (e, fx) <- thought, RemoveSelf `elem` fx]
@@ -247,7 +272,7 @@ data Impact = Impact !HitDef !(Maybe GuardHeight) !Facing
 -- The pad is the defender's, for its guard.
 connects :: Character -> Fighter -> Character -> Pad -> Fighter -> Maybe Impact
 connects ca a cd p d = case fAttack a of
-  Just h
+  Just (Strike h)
     | not (fContact a)
         && fStance d /= Lying
         && not (hdLevel h == HitHigh && fStance d == Crouching)
@@ -335,6 +360,94 @@ getHit c attackerFacing h d =
       | otherwise = cHitState k
     entered = enterState c reaction d
 
+-- | Does @a@'s active throw catch @d@ this tick? Only a fighter on its feet
+-- (standing or crouching) and not being hit can be thrown, which also
+-- rules out one in guard stun or already held. Guarding does not stop a
+-- throw. It connects at most once: the thrower goes on to the throw's state,
+-- which disarms it.
+grabs :: Character -> Fighter -> Character -> Fighter -> Maybe ThrowDef
+grabs ca a cd d = case fAttack a of
+  Just (Grab t)
+    | (fStance d == Standing || fStance d == Crouching)
+        && fMoveType d /= BeingHit
+        && anyOverlap (hitboxes ca a) (hurtboxes cd d) ->
+        Just t
+  _ -> Nothing
+
+-- | The throw that connected this tick, or the hold in progress. There is
+-- at most one: two throws on the same tick both miss, and a held fighter
+-- cannot throw nor be thrown.
+throws :: Stage -> Character -> Character -> Maybe ThrowDef -> Maybe ThrowDef -> (Fighter, Fighter) -> (Fighter, Fighter)
+throws st c1 c2 grab12 grab21 (f1, f2)
+  | Just t <- grab12 = grab st c1 c2 t f1 f2
+  | Just t <- grab21 = swap (grab st c2 c1 t f2 f1)
+  | Just h <- fHeld f2 = hold st c1 c2 h f1 f2
+  | Just h <- fHeld f1 = swap (hold st c2 c1 h f2 f1)
+  | otherwise = (f1, f2)
+  where
+    swap (a, b) = (b, a)
+
+-- | A throw connects: the thrower goes on to the throw's state and the
+-- opponent is held, in its held state.
+grab :: Stage -> Character -> Character -> ThrowDef -> Fighter -> Fighter -> (Fighter, Fighter)
+grab st ca cd t a d = (a', bindTo st a' held)
+  where
+    a' = enterState ca (tdState t) a
+    held =
+      (enterState cd (cHeldState (charConsts cd)) d)
+        { fHeld = Just (Held t 0),
+          fCtrl = False,
+          fHitStun = 0,
+          fVX = 0,
+          fVY = 0
+        }
+
+-- | One more tick of a hold. The held fighter escapes if its escape command
+-- is active during the escape window: both fighters recoil, unhurt.
+-- Otherwise, once the hold has lasted its ticks, the throw lands: damage
+-- and a knockdown, thrown in the direction the thrower faces.
+hold :: Stage -> Character -> Character -> Held -> Fighter -> Fighter -> (Fighter, Fighter)
+hold st ca cd (Held t n) a d
+  | n' <= tdEscape t && isActive (cThrowEscape kd) (fBuffer d) =
+      ( recoil ca (negate throwEscapePush) a,
+        recoil cd (forward throwEscapePush) d {fHeld = Nothing}
+      )
+  | n' >= tdHold t =
+      ( a,
+        let fallen = enterState cd (cFallState kd) d {fHeld = Nothing}
+         in fallen
+              { fLife = max 0 (fLife d - tdDamage t),
+                fCtrl = False,
+                fHitStun = 0,
+                fVX = forward (fst (tdLaunch t)),
+                fVY = snd (tdLaunch t),
+                fJuggle = fJuggle fallen + 1
+              }
+      )
+  | otherwise = (a, bindTo st a d {fHeld = Just (Held t n')})
+  where
+    n' = n + 1
+    kd = charConsts cd
+    -- a speed along the thrower's forward, in the held fighter's terms
+    forward v = v * facingSign (fFacing a) * facingSign (fFacing d)
+    recoil c vx f =
+      (enterState c (if fY f < 0 then cHitAirState (charConsts c) else cHitState (charConsts c)) f)
+        { fHitStun = throwEscapeStun,
+          fCtrl = False,
+          fVX = vx,
+          fVY = 0
+        }
+
+-- | Put a held fighter where its thrower holds it (the offset follows the
+-- thrower's facing), never under the floor and inside the view.
+bindTo :: Stage -> Fighter -> Fighter -> Fighter
+bindTo st a d = clampX lo hi d {fX = x, fY = y}
+  where
+    (ox, oy) = maybe (0, 0) (tdOffset . heldThrow) (fHeld d)
+    x = fX a + ox * facingSign (fFacing a)
+    y = min 0 (fY a + oy)
+    (lo, hi) = viewBounds st (cameraFor st (fX a, fY a) (x, y))
+
 -- | Idle fighters on the floor turn to face the opponent. Attacking ones do
 -- not: a move that crosses the opponent keeps its direction.
 autoTurn :: Fighter -> Fighter -> Fighter
@@ -343,14 +456,17 @@ autoTurn f opp
       f {fFacing = flipFacing (fFacing f)}
   | otherwise = f
 
--- | Keep bodies from overlapping and fighters inside the view.
+-- | Keep bodies from overlapping and fighters inside the view. A thrower
+-- and the fighter it holds do not push each other.
 separate :: Stage -> Character -> Character -> Fighter -> Fighter -> (Fighter, Fighter)
 separate st c1 c2 f1 f2 = fixCorner (clampX lo hi g1, clampX lo hi g2)
   where
+    holding = inHold f1 || inHold f2
     w1 = cHalfWidth (charConsts c1)
     w2 = cHalfWidth (charConsts c2)
     overlapping a b =
-      fY a - cHeight (charConsts c1) < fY b
+      not holding
+        && fY a - cHeight (charConsts c1) < fY b
         && fY b - cHeight (charConsts c2) < fY a
     overlapBy a b = (w1 + w2) - abs (fX b - fX a)
     (g1, g2)

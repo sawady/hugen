@@ -57,9 +57,9 @@ spec = do
       fLife (mP2 m) `shouldBe` 1000 - hdDamage hitDef - 90
       fLife (mP1 m) `shouldBe` 1000
 
-    it "every attack in the demo connects exactly once" $ do
+    it "every attack and the throw in the demo connect exactly once" $ do
       let m = simulate demoDef demoScript start
-      fLife (mP2 m) `shouldBe` 1000 - 30 - 90 - 50 - 110 - hdDamage fireballHit
+      fLife (mP2 m) `shouldBe` 1000 - 30 - 90 - 50 - 110 - hdDamage fireballHit - tdDamage blockyThrow
       mNextId m `shouldBe` 1
       mEntities m `shouldBe` []
 

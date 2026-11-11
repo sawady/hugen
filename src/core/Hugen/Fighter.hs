@@ -8,6 +8,8 @@
 -- restored (replays, tests, rollback).
 module Hugen.Fighter
   ( Fighter (..),
+    Held (..),
+    inHold,
     newFighter,
     Sight (..),
     eval,
@@ -58,18 +60,32 @@ data Fighter = Fighter
     fVars :: !(IntMap.IntMap Int),
     fHistory :: !History,
     fBuffer :: !CommandBuffer,
-    -- | The attack made active in this state, if any.
-    fAttack :: !(Maybe HitDef),
-    -- | Did that attack connect?
+    -- | The attack or throw made active in this state, if any.
+    fAttack :: !(Maybe Armed),
+    -- | Did it connect?
     fContact :: !Bool,
     -- | Ticks left of hit stun or guard stun.
     fHitStun :: !Int,
     -- | Ticks left frozen in hit pause.
     fPause :: !Int,
     -- | Hits taken in the air since the fighter last touched the floor.
-    fJuggle :: !Int
+    fJuggle :: !Int,
+    -- | The opponent's throw that holds this fighter, if any.
+    fHeld :: !(Maybe Held)
   }
   deriving (Eq, Show)
+
+-- | A throw in progress, seen from the fighter it holds.
+data Held = Held
+  { heldThrow :: !ThrowDef,
+    -- | Ticks the hold has lasted: 0 on the tick the throw connects.
+    heldTime :: !Int
+  }
+  deriving (Eq, Show)
+
+-- | Is an opponent's throw holding the fighter?
+inHold :: Fighter -> Bool
+inHold = maybe False (const True) . fHeld
 
 newFighter :: Character -> Facing -> Fx -> Fighter
 newFighter c facing x =
@@ -97,7 +113,8 @@ newFighter c facing x =
         fContact = False,
         fHitStun = 0,
         fPause = 0,
-        fJuggle = 0
+        fJuggle = 0,
+        fHeld = Nothing
       }
   where
     k = charConsts c
@@ -192,7 +209,8 @@ data Effect
 -- A state change stops the list it happens in and runs the new state on
 -- the same tick, at most 'maxChanges' times per tick so that two states
 -- that jump to each other cannot hang the engine. The effects come out in
--- the order their controllers ran.
+-- the order their controllers ran. Nothing runs during hit pause or while
+-- a throw holds the fighter.
 think :: Character -> Sight -> Fighter -> (Fighter, [Effect])
 think c = thinkWith (charGlobal c) c
 
@@ -203,7 +221,7 @@ thinkEntity = thinkWith []
 
 thinkWith :: [Controller] -> Character -> Sight -> Fighter -> (Fighter, [Effect])
 thinkWith global c sight f0
-  | fPause f0 > 0 = (f0, [])
+  | fPause f0 > 0 || inHold f0 = (f0, [])
   | otherwise = case run global f0 [] of
       Changed f es -> inState (maxChanges - 1) f es
       Continue f es -> inState maxChanges f es
@@ -250,7 +268,8 @@ perform c sight a f = case a of
   VelAdd x y -> f {fVX = fVX f + ev x, fVY = fVY f + ev y}
   PosAdd x y -> f {fX = fX f + ev x * facingSign (fFacing f), fY = fY f + ev y}
   SetVar n e -> f {fVars = IntMap.insert n (ev e) (fVars f)}
-  Attack h -> f {fAttack = Just h, fContact = False}
+  Attack h -> f {fAttack = Just (Strike h), fContact = False}
+  Throw t -> f {fAttack = Just (Grab t), fContact = False}
   Turn -> f {fFacing = flipFacing (fFacing f)}
   -- handled by 'think', which reports them as effects
   Spawn _ -> f
@@ -288,10 +307,11 @@ enterState c n f = withVel . withCtrl . withAnim $ base
 
 -- | Move by the velocity, then apply friction or gravity. An airborne
 -- fighter that reaches the floor while falling lands: it is put on the
--- floor and sent to the character's land state.
+-- floor and sent to the character's land state. A fighter held by a throw
+-- does not move by itself: the match puts it where the thrower holds it.
 physics :: Character -> Fighter -> Fighter
 physics c f
-  | fPause f > 0 = f
+  | fPause f > 0 || inHold f = f
   | otherwise = case fPhysics f of
       PhysStand -> moved {fVX = fVX f * cStandFriction k}
       PhysCrouch -> moved {fVX = fVX f * cCrouchFriction k}

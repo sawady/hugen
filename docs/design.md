@@ -94,15 +94,20 @@ fighting game is a sequence of discrete frames, and so is Hugen.
    enters its land state.
 4. **Space.** Bodies push each other apart (each one half the overlap, rounded up so
    the push is symmetric); fighters are clamped to the stage and to the camera view;
-   against a wall, only the other fighter moves. Entities are not pushed or clamped.
-5. **Hits.** Every active attack, of a fighter or of an entity, is tested against the
-   opposing fighter's hurtboxes, all on the same snapshot, so attacks can **trade**. The
-   defender's guard is checked here, against this tick's pad. Opposing projectiles that
-   touch cancel out, on the same snapshot.
+   against a wall, only the other fighter moves. Entities are not pushed or clamped, and
+   a thrower and the fighter it holds do not push each other.
+5. **Hits.** Throws first (section 5): a throw that connects, or a hold in progress,
+   keeps every attack off both fighters this tick. Then every active attack, of a
+   fighter or of an entity, is tested against the opposing fighter's hurtboxes, all on
+   the same snapshot, so attacks can **trade**. The defender's guard is checked here,
+   against this tick's pad. Opposing projectiles that touch cancel out, on the same
+   snapshot.
 6. **Clocks, then impact.** State time, animation and hit stun advance (or a tick of hit
    pause is spent). Then the hits found in step 5 are applied: damage and the defender's
    hit state, or chip damage and its guard state; pushback; and a hit pause that starts
-   on the *next* tick.
+   on the *next* tick. Then throws: one that connected puts the opponent in its held
+   state; a hold in progress is escaped, lands or goes on; and the held fighter is put
+   where the thrower holds it.
 7. **Facing.** An idle fighter on the floor turns to face the opponent. A fighter in
    an attack does not: a move that crosses the opponent keeps its direction.
 8. **Camera, entities and round end.** Entities that destroyed themselves, and
@@ -223,6 +228,7 @@ data Action
   | PosAdd (Expr Fx) (Expr Fx) | SetVar Int (Expr Int)
   | Attack HitDef | Turn
   | Spawn EntityDef | DestroySelf   -- section 5, helpers and projectiles
+  | Throw ThrowDef                  -- section 5, throws
 ```
 
 **`ChangeState` runs the new state on the same tick.** The rest of the current list is
@@ -280,7 +286,8 @@ also a feature: the set of things a character can observe is explicit.
 `Hugen.Common` provides MUGEN's common states with their usual numbers: stand (0),
 crouch (11), walk (20), jump start (40), jump (50), land (52), standing and crouching
 guard (150, 152), hit (5000), heavy hit (5001), hit in the air (5030), fall (5050), lying
-(5110) and getting up (5120), plus `attackState`, a template for "play the animation, arm
+(5110) and getting up (5120), and the state of a fighter held by a throw (5300, a Hugen
+number: MUGEN has no common state for it), plus `attackState`, a template for "play the animation, arm
 the hit on frame n, return to state m". A character reuses them and adds its moves.
 
 ## 5. Animation and collision (implemented)
@@ -413,7 +420,56 @@ second frame, and the projectile's state sets its speed and arms a mid attack wi
 damage. The command only starts a throw while `numProjectiles .== 0`, so Blocky has one
 fireball on screen at a time.
 
-**Proposed next:** throws.
+### Throws
+
+A throw is armed by the `Throw` action (MUGEN uses a `HitDef` with `p1stateno`,
+`p2stateno` and `TargetBind` for this):
+
+```haskell
+data ThrowDef = ThrowDef
+  { tdDamage :: Int
+  , tdState :: StateId     -- the thrower's state once it connects
+  , tdHold :: Int          -- ticks the opponent is held before the throw lands
+  , tdEscape :: Int        -- ticks at the start of the hold in which it can escape
+  , tdOffset :: (Fx, Fx)   -- where the opponent is held, from the thrower's axis
+  , tdLaunch :: (Fx, Fx) } -- velocity it is thrown with, x forward from the thrower
+
+on (animElemStarts 1) (throw blockyThrow)   -- Blocky's throw, C at close range
+```
+
+- **What it catches.** Like an attack, a throw connects at most once, when a hitbox of
+  the current frame overlaps a hurtbox of the opponent. It cannot be guarded, and it
+  only catches an opponent on its feet (standing or crouching) that is not being hit:
+  not one in the air, lying or getting up, in hit stun or guard stun, or already held.
+  An opponent in the middle of an attack can be thrown.
+- **The hold.** The thrower goes to `tdState`. The opponent goes to its own held state
+  (`cHeldState`, common state 5300) and is held: it runs no controllers and no physics,
+  and at the end of every tick the engine puts it at `tdOffset` from the thrower (x
+  forward, so it follows the thrower's facing, also when the thrower turns), never under
+  the floor and inside the view. The hold depends only on its own clock: the thrower's
+  state is free to animate, move or turn, but it does not decide when the throw lands.
+  MUGEN runs the thrown character in the thrower's states ("custom states"); Hugen keeps
+  it in a state of its own character, so that both characters stay self-contained.
+- **Nothing hits them.** On the tick a throw connects and while the hold lasts, no
+  attack reaches either fighter: not the thrower's, not one the held fighter armed
+  before, not an entity's. They go through without contact, and a projectile is not
+  spent. So a throw beats an attack that would connect on the same tick, and two throws
+  that connect on the same tick both miss.
+- **Escaping.** The held fighter escapes if its escape command (`cThrowEscape`, a
+  command of its own character) is active on any of the first `tdEscape` ticks of the
+  hold. The command buffer counts, so an escape completed on the tick the throw connects
+  works too. Both fighters then enter their hit state (the air one if above the floor)
+  for `throwEscapeStun` (12) ticks, pushed apart at `throwEscapePush` (4) along the
+  thrower's facing, unhurt, and get control back on the same tick.
+- **Landing.** Otherwise, after `tdHold` ticks the throw lands: `tdDamage`, which can end
+  the round, and a knockdown. The opponent enters its fall state with `tdLaunch` (x along
+  the way the thrower faces then), lies and gets up as after any knockdown. It counts as
+  one hit for the juggle limit, like a knockdown from the floor.
+- **Only fighters throw.** An entity can run `Throw`, but its throw never connects.
+
+Blocky's throw is C at close range: active on the fourth tick for three ticks, 16 ticks
+of recovery when it whiffs. It holds the opponent for 20 ticks, body against body, with
+an escape window of 10 (pressing C again), and deals 120.
 
 ## 6. Camera (implemented)
 
@@ -447,7 +503,7 @@ data Character = Character
 ```
 
 `Hugen.Example.Blocky` is the reference: the common states, four normals, an air
-attack, a dash, a rush special, an uppercut and a fireball, all drawn with rectangles
+attack, a dash, a rush special, an uppercut, a fireball and a throw, all drawn with rectangles
 generated by code.
 
 **The plan is layered** (see section 9 for what is decided):
@@ -469,7 +525,10 @@ generated by code.
   guards, reactions, the knockdown sequence, no hits on a fighter that is down, the
   juggle limit; and one per entity rule: where a projectile appears and how it flies,
   hitting and guarding from a distance, cancelling out, leaving the view, ids, the cap,
-  helpers that hit and destroy themselves, several hits on one tick.
+  helpers that hit and destroy themselves, several hits on one tick; and one per throw
+  rule: what a throw catches and what it does not, the hold to the tick, landing,
+  the escape window to the tick, nothing hitting during a hold, a throw against an
+  attack or another throw on the same tick, turning while holding, walls.
 - **Properties** over random inputs (QuickCheck):
   - determinism: the same inputs give the same match;
   - `step` is a fold: running a prefix and then the rest equals running everything (no
@@ -479,12 +538,17 @@ generated by code.
   - invariants: life in range, fighters inside the stage and never below the floor;
   - the same properties over fights at close range, with coverage checks that make sure
     those fights reach guards and knockdowns, and over fights full of fireballs, with
-    coverage of each way a projectile ends (hit, guard, cancel, leaving the view);
+    coverage of each way a projectile ends (hit, guard, cancel, leaving the view), and
+    over fights at throw range, with coverage of throws that land and throws that are
+    escaped, also with random throws;
   - entity invariants: creation order, ids under the counter, the cap, projectiles near
-    the view.
+    the view;
+  - throw invariants: at most one fighter held, held where the thrower holds it, unhurt
+    until the throw lands, and every hold ends by itself.
 - **Mutation checks.** Each rule was broken on purpose once (a projectile that is not
-  spent, entities that hit their own side, reused ids, offsets that ignore facing...)
-  to confirm that some test fails.
+  spent, entities that hit their own side, reused ids, offsets that ignore facing, a
+  throw that can be guarded, an escape window one tick off...) to confirm that some
+  test fails.
 - **Headless runs**: `hugen --headless` prints the scripted demo; `hugen --snapshot`
   draws a tick with SDL's software renderer (`SDL_VIDEODRIVER=dummy`), which CI uploads
   as an artifact.
@@ -531,3 +595,11 @@ These need a decision from the maintainer; the code picks a default for each.
    snapshot); entities keep moving while the fighters are in hit pause; "leaving the
    view" is only horizontal; at most 32 entities per side; `numProjectiles` counts one's
    own projectiles, and Blocky uses it to throw one at a time.
+8. **Throws.** Defaults taken for the first version (section 5): a throw cannot be
+   guarded and only catches an opponent on its feet that is not being hit; it beats an
+   attack on the same tick, and two throws on the same tick both miss; nothing hits
+   either fighter during the hold; the escape is the held fighter's own command during
+   the first `tdEscape` ticks, buffer included, and leaves both fighters in their hit
+   state for 12 ticks, unhurt; the hold lasts a fixed time, whatever the thrower's state
+   does; a landed throw is a knockdown and counts for the juggle; only fighters throw,
+   and there are no air throws (a throw cannot catch an airborne opponent).

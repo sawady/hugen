@@ -20,6 +20,9 @@ module Hugen.Character
     guardBlocks,
     HitDef (..),
     hitDef,
+    ThrowDef (..),
+    throwDef,
+    Armed (..),
     EntityKind (..),
     EntityDef (..),
     Action (..),
@@ -46,6 +49,7 @@ module Hugen.Character
     posAdd,
     setVar,
     attack,
+    throw,
     turn,
     spawnHelper,
     spawnProjectile,
@@ -142,6 +146,50 @@ hitDef =
       hdGuardStun = 10
     }
 
+-- | A throw, made active by the 'Throw' action (MUGEN's HitDef with
+-- @p1stateno@ and @p2stateno@, and @TargetBind@). Like an attack, it
+-- connects when a hitbox of the current frame overlaps a hurtbox of the
+-- opponent, but it cannot be guarded and only catches an opponent that is on
+-- its feet and not being hit. The opponent is then held: it follows the
+-- thrower at 'tdOffset' for 'tdHold' ticks, and can escape during the first
+-- 'tdEscape' of them. If it does not, the throw lands: 'tdDamage' and a
+-- knockdown.
+data ThrowDef = ThrowDef
+  { tdDamage :: !Int,
+    -- | Thrower's state once the throw connects.
+    tdState :: !StateId,
+    -- | Ticks the opponent is held before the throw lands.
+    tdHold :: !Int,
+    -- | Ticks at the start of the hold in which the opponent can escape.
+    tdEscape :: !Int,
+    -- | Where the opponent is held, from the thrower's axis: x forward, y
+    -- down.
+    tdOffset :: !(Fx, Fx),
+    -- | Velocity the opponent is thrown with: x forward from the thrower, y
+    -- down (negative is up).
+    tdLaunch :: !(Fx, Fx)
+  }
+  deriving (Eq, Show)
+
+-- | A throw that goes on to the given state of the thrower; adjust with
+-- record update syntax.
+throwDef :: StateId -> ThrowDef
+throwDef st =
+  ThrowDef
+    { tdDamage = 100,
+      tdState = st,
+      tdHold = 20,
+      tdEscape = 10,
+      tdOffset = (32, 0),
+      tdLaunch = (3, -5)
+    }
+
+-- | What a state makes active: an attack or a throw.
+data Armed
+  = Strike !HitDef
+  | Grab !ThrowDef
+  deriving (Eq, Show)
+
 -- | What an entity created by 'Spawn' is. Either kind runs its own states
 -- (from its owner's character) and its attacks hit the owner's opponent.
 data EntityKind
@@ -173,6 +221,9 @@ data Action
   | PosAdd (Expr Fx) (Expr Fx)
   | SetVar Int (Expr Int)
   | Attack HitDef
+  | -- | Make a throw active. Only a fighter's throw connects: an entity's
+    -- never does.
+    Throw ThrowDef
   | -- | Face the other way.
     Turn
   | -- | Create an entity. It faces the way the spawner faces and starts
@@ -247,6 +298,10 @@ data Consts = Consts
     cGuardCrouchState :: !StateId,
     -- | State entered at the start of a round.
     cStartState :: !StateId,
+    -- | State the fighter is in while an opponent's throw holds it.
+    cHeldState :: !StateId,
+    -- | Command that escapes a throw, during the throw's escape window.
+    cThrowEscape :: !String,
     -- | Hits a fighter can take before touching the floor again.
     cJuggleLimit :: !Int
   }
@@ -276,6 +331,8 @@ defaultConsts =
       cGuardStandState = 150,
       cGuardCrouchState = 152,
       cStartState = 0,
+      cHeldState = 5300,
+      cThrowEscape = "throw",
       cJuggleLimit = 3
     }
 
@@ -301,8 +358,9 @@ historyTicks c = 2 + maximum (0 : map need (charCommands c))
   where
     need k = cmdTime k + chordWindow + sum [n | Charge _ n <- cmdSteps k]
 
--- | Problems in a definition: references to missing states or animations,
--- empty animations. An empty list means the character is well formed.
+-- | Problems in a definition: references to missing states, animations or
+-- commands, empty animations. An empty list means the character is well
+-- formed.
 validate :: Character -> [String]
 validate c =
   [ "state " ++ show n ++ " is used but not defined"
@@ -317,6 +375,9 @@ validate c =
        | (a, an) <- IntMap.toList (charAnims c),
          null (animFrames an)
        ]
+    ++ [ "command " ++ show (cThrowEscape k) ++ " escapes throws but is not defined"
+       | cThrowEscape k `notElem` map cmdName (charCommands c)
+       ]
   where
     k = charConsts c
     requiredStates =
@@ -327,13 +388,15 @@ validate c =
         cFallState k,
         cGuardStandState k,
         cGuardCrouchState k,
-        cStartState k
+        cStartState k,
+        cHeldState k
       ]
     landStates = mapMaybe sdLandState (IntMap.elems (charStates c))
     allControllers = charGlobal c ++ concatMap sdControllers (IntMap.elems (charStates c))
     targets ctl = case ctrlAction ctl of
       ChangeState n -> [n]
       Spawn d -> [edState d]
+      Throw t -> [tdState t]
       _ -> []
     usedAnims =
       mapMaybe sdAnim (IntMap.elems (charStates c))
@@ -366,6 +429,9 @@ setVar = SetVar
 
 attack :: HitDef -> Action
 attack = Attack
+
+throw :: ThrowDef -> Action
+throw = Throw
 
 turn :: Action
 turn = Turn

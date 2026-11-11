@@ -106,6 +106,7 @@ test-suite hugen-test
       EntitySpec
       Gen
       MatchSpec
+      ThrowSpec
       Paths_hugen
   autogen-modules:
       Paths_hugen

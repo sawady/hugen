@@ -37,6 +37,12 @@ and this project adheres to the
 - Blocky's fireball (↓ ↙ ← + A), also at the end of the scripted demo; one on screen at
   a time.
 - The `numProjectiles` trigger: projectiles of one's own side in the match.
+- Throws: the `Throw` action arms a throw that cannot be guarded and only catches an
+  opponent on its feet that is not being hit. The opponent is held in front of the
+  thrower, where nothing can hit either of them, and can escape with its own escape
+  command during a window; otherwise the throw lands as damage and a knockdown. New
+  common state for a held fighter (5300).
+- Blocky's throw (C, up close; C again to escape), also at the end of the scripted demo.
 
 ### Changed
 
