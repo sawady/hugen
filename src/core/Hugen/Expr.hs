@@ -47,6 +47,7 @@ module Hugen.Expr
     hitOver,
     cmd,
     holding,
+    numProjectiles,
 
     -- * Queries about the opponent
     p2DistX,
@@ -110,6 +111,7 @@ data Expr a where
   HitOver :: Expr Bool
   CommandActive :: String -> Expr Bool
   Holding :: Dir -> Expr Bool
+  NumProjectiles :: Expr Int
   -- Opponent
   P2DistX :: Expr Fx
   P2DistY :: Expr Fx
@@ -213,6 +215,12 @@ cmd = CommandActive
 -- | Is the direction (loose, relative to facing) held right now?
 holding :: Dir -> Expr Bool
 holding = Holding
+
+-- | Projectiles of the fighter's side in the match at the start of the
+-- tick (MUGEN's @NumProj@). For an entity, those of its owner's side,
+-- itself included if it is one.
+numProjectiles :: Expr Int
+numProjectiles = NumProjectiles
 
 -- | Horizontal distance between the axes, positive when the opponent is in
 -- front.

@@ -96,7 +96,8 @@ global =
     on (cmd "qcf_a" .&& ctrl .&& grounded) (changeState stRush),
     -- a jab that connects can be canceled into the rush
     on (cmd "qcf_a" .&& stateNo .== lit stJab .&& moveContact) (changeState stRush),
-    on (cmd "qcb_a" .&& ctrl .&& grounded) (changeState stThrow),
+    -- one fireball at a time
+    on (cmd "qcb_a" .&& ctrl .&& grounded .&& numProjectiles .== 0) (changeState stThrow),
     on (cmd "ff" .&& ctrl .&& standing) (changeState stDash),
     on (cmd "a" .&& ctrl .&& standing) (changeState stJab),
     on (cmd "b" .&& ctrl .&& standing) (changeState stKick),

@@ -34,7 +34,9 @@ and this project adheres to the
   their owner's character and whose attacks hit the opponent. A projectile is removed
   when it connects, when it touches an opposing projectile and when it leaves the view;
   a helper when it runs `DestroySelf`. Entities are kept in creation order.
-- Blocky's fireball (↓ ↙ ← + A), also at the end of the scripted demo.
+- Blocky's fireball (↓ ↙ ← + A), also at the end of the scripted demo; one on screen at
+  a time.
+- The `numProjectiles` trigger: projectiles of one's own side in the match.
 
 ### Changed
 

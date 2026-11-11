@@ -139,12 +139,13 @@ step md (pad1, pad2) m =
     a1 = feedInput c1 in1 (mP1 m)
     a2 = feedInput c2 in2 (mP2 m)
     -- 2. controllers, against the opponent's snapshot
-    (b1, fx1) = think c1 a2 a1
-    (b2, fx2) = think c2 a1 a2
+    sightOf s = Sight (bySide s a2 a1) (length [() | e <- mEntities m, eOwner e == s, eKind e == Projectile])
+    (b1, fx1) = think c1 (sightOf P1) a1
+    (b2, fx2) = think c2 (sightOf P2) a2
     thought =
       [ (e {eBody = body}, fx)
       | e <- mEntities m,
-        let (body, fx) = thinkEntity (charOf (eOwner e)) (bySide (eOwner e) a2 a1) (eBody e)
+        let (body, fx) = thinkEntity (charOf (eOwner e)) (sightOf (eOwner e)) (eBody e)
       ]
     -- 3. physics
     ph1 = physics c1 b1

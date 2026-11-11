@@ -9,6 +9,7 @@
 module Hugen.Fighter
   ( Fighter (..),
     newFighter,
+    Sight (..),
     eval,
     feedInput,
     Effect (..),
@@ -101,10 +102,20 @@ newFighter c facing x =
   where
     k = charConsts c
 
--- | Evaluate a trigger expression for @self@, against an @opponent@.
-eval :: Character -> Fighter -> Fighter -> Expr a -> a
-eval c self opp = go
+-- | What a fighter (or an entity) can see of the match besides itself,
+-- as it was before the controllers ran.
+data Sight = Sight
+  { sightOpponent :: !Fighter,
+    -- | Projectiles of its own side.
+    sightProjectiles :: !Int
+  }
+  deriving (Eq, Show)
+
+-- | Evaluate a trigger expression for @self@.
+eval :: Character -> Sight -> Fighter -> Expr a -> a
+eval c sight self = go
   where
+    opp = sightOpponent sight
     go :: Expr b -> b
     go e = case e of
       Lit v -> v
@@ -126,6 +137,7 @@ eval c self opp = go
       HitOver -> fHitStun self <= 0
       CommandActive name -> isActive name (fBuffer self)
       Holding d -> dirHas (riDir (inputAt (fHistory self) 0)) d
+      NumProjectiles -> sightProjectiles sight
       P2DistX -> (fX opp - fX self) * facingSign (fFacing self)
       P2DistY -> fY opp - fY self
       P2MoveType -> fMoveType opp
@@ -181,16 +193,16 @@ data Effect
 -- the same tick, at most 'maxChanges' times per tick so that two states
 -- that jump to each other cannot hang the engine. The effects come out in
 -- the order their controllers ran.
-think :: Character -> Fighter -> Fighter -> (Fighter, [Effect])
+think :: Character -> Sight -> Fighter -> (Fighter, [Effect])
 think c = thinkWith (charGlobal c) c
 
 -- | 'think' for an entity: only its state's controllers run, never the
 -- character's global ones (which turn commands into moves).
-thinkEntity :: Character -> Fighter -> Fighter -> (Fighter, [Effect])
+thinkEntity :: Character -> Sight -> Fighter -> (Fighter, [Effect])
 thinkEntity = thinkWith []
 
-thinkWith :: [Controller] -> Character -> Fighter -> Fighter -> (Fighter, [Effect])
-thinkWith global c opp f0
+thinkWith :: [Controller] -> Character -> Sight -> Fighter -> (Fighter, [Effect])
+thinkWith global c sight f0
   | fPause f0 > 0 = (f0, [])
   | otherwise = case run global f0 [] of
       Changed f es -> inState (maxChanges - 1) f es
@@ -207,11 +219,11 @@ thinkWith global c opp f0
     run :: [Controller] -> Fighter -> [Effect] -> Flow
     run [] f es = Continue f es
     run (k : ks) f es
-      | eval c f opp (ctrlTrigger k) = case ctrlAction k of
+      | eval c sight f (ctrlTrigger k) = case ctrlAction k of
           ChangeState n -> Changed (enterState c n f) es
           Spawn d -> run ks f (spawnFrom d f : es)
           DestroySelf -> run ks f (RemoveSelf : es)
-          a -> run ks (perform c opp a f) es
+          a -> run ks (perform c sight a f) es
       | otherwise = run ks f es
 
 data Flow = Continue Fighter [Effect] | Changed Fighter [Effect]
@@ -225,8 +237,8 @@ spawnFrom d f = SpawnAt d (fFacing f) (fX f + dx * facingSign (fFacing f), fY f 
 maxChanges :: Int
 maxChanges = 8
 
-perform :: Character -> Fighter -> Action -> Fighter -> Fighter
-perform c opp a f = case a of
+perform :: Character -> Sight -> Action -> Fighter -> Fighter
+perform c sight a f = case a of
   ChangeState n -> enterState c n f
   ChangeAnim n -> setAnim n f
   SetCtrl b -> f {fCtrl = b}
@@ -245,7 +257,7 @@ perform c opp a f = case a of
   DestroySelf -> f
   where
     ev :: Expr b -> b
-    ev = eval c f opp
+    ev = eval c sight f
 
 setAnim :: AnimId -> Fighter -> Fighter
 setAnim n f = f {fAnim = n, fAnimPos = startAnim}

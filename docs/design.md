@@ -242,6 +242,7 @@ data Expr a where
   PosY, VelX, VelY, P2DistX :: Expr Fx
   CommandActive :: String -> Expr Bool
   Holding :: Dir -> Expr Bool
+  NumProjectiles :: Expr Int       -- own side's projectiles (section 5)
   Cmp :: (Ord b, Show b) => CmpOp -> Expr b -> Expr b -> Expr Bool
   And, Or :: Expr Bool -> Expr Bool -> Expr Bool
   Arith :: Num a => ArithOp -> Expr a -> Expr a -> Expr a
@@ -266,8 +267,10 @@ Why a deep embedding instead of `Fighter -> Bool`:
   which states can it reach? `validate` already checks state and animation
   references), serialized, and parsed from a text format later into the very same
   tree.
-- **It cannot do IO or read anything outside the fighter and its opponent.** The
-  evaluator (`Hugen.Fighter.eval`) is the only interpreter, and it is pure.
+- **It cannot do IO or read anything outside the fighter and what it sees of the
+  match** (a `Sight`: the opponent and how many projectiles its side has, as they were
+  before the controllers ran). The evaluator (`Hugen.Fighter.eval`) is the only
+  interpreter, and it is pure.
 
 The cost is that every new query needs a constructor and an evaluator case. That is
 also a feature: the set of things a character can observe is explicit.
@@ -400,9 +403,15 @@ on (animElemStarts 1) (spawnProjectile stFireball 30 (-46))   -- Blocky's throw
   hits fill it, the later ones go through without contact (a projectile that goes
   through is not spent).
 
+- **Counting.** The trigger `numProjectiles` (MUGEN's `NumProj`) is the number of
+  projectiles of the fighter's side in the match at the start of the tick; for an entity,
+  those of its owner. Helpers do not count. A projectile created this tick is counted
+  from the next one, and one removed this tick until the end of it.
+
 Blocky's fireball (↓ ↙ ← + A) is the example: the throw creates the projectile on its
 second frame, and the projectile's state sets its speed and arms a mid attack with chip
-damage.
+damage. The command only starts a throw while `numProjectiles .== 0`, so Blocky has one
+fireball on screen at a time.
 
 **Proposed next:** throws.
 
@@ -516,10 +525,9 @@ These need a decision from the maintainer; the code picks a default for each.
    of a "system" character?
 6. **Juggle model.** Resolved: every air hit costs one and the limit is 3 per character.
    Attacks have no individual cost.
-7. **Entities.** Defaults taken with the simplest rule, all easy to change: fighters
-   cannot hit entities; projectiles cancel out one for one with no priority or
-   durability; a projectile that cancels out on the tick it reaches the opponent still
-   hits (same snapshot); entities keep moving while the fighters are in hit pause;
-   "leaving the view" is only horizontal; at most 32 entities per side; no trigger yet
-   to count one's own projectiles (MUGEN's `NumProj`), so nothing stops a second
-   fireball once the first one's throw has recovered.
+7. **Entities.** Resolved (2026-11-11), as described in section 5: fighters cannot hit
+   entities; projectiles cancel out one for one with no priority or durability; a
+   projectile that cancels out on the tick it reaches the opponent still hits (same
+   snapshot); entities keep moving while the fighters are in hit pause; "leaving the
+   view" is only horizontal; at most 32 entities per side; `numProjectiles` counts one's
+   own projectiles, and Blocky uses it to throw one at a time.

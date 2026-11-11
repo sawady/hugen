@@ -92,6 +92,18 @@ summoner =
         }
     helperAnim = anim [Anim.Frame (SpriteRef 900 0) (-1) [] [box (-10) (-60) 10 0]]
 
+-- | Blocky that writes 'numProjectiles' to var 0 every tick, and whose
+-- idle helper does the same.
+counter :: Character
+counter =
+  blocky
+    { charGlobal = on true (setVar 0 numProjectiles) : charGlobal blocky,
+      charStates = IntMap.insert stIdleHelper (stateDef Standing Idle PhysNone) {sdControllers = [on true (setVar 0 numProjectiles)]} (charStates blocky)
+    }
+
+var0 :: Fighter -> Int
+var0 = IntMap.findWithDefault 0 0 . fVars
+
 -- | Blocky with a global controller that creates an idle helper every tick.
 spammer :: Character
 spammer =
@@ -280,6 +292,46 @@ spec = describe "entities" $ do
       fContact (mP1 m) `shouldBe` True
       map eId (mEntities m) `shouldBe` [0]
 
+  describe "counting projectiles" $ do
+    let md = demoDef {mdP1 = counter, mdP2 = counter}
+        m0 = newMatch md
+        helperOf n side = Entity n side Helper (enterState counter stIdleHelper (newFighter counter FacingRight 0))
+
+    it "counts the projectiles of its own side only, not helpers, for fighters and entities" $ do
+      let es =
+            [ fireballAt 0 P1 FacingLeft (-100) (-46),
+              fireballAt 1 P2 FacingRight 100 (-46),
+              helperOf 2 P1,
+              fireballAt 3 P1 FacingLeft (-110) (-46)
+            ]
+          m = step md (noInput, noInput) (withEntities es m0)
+      (var0 (mP1 m), var0 (mP2 m)) `shouldBe` (2, 1)
+      [var0 (eBody e) | e <- mEntities m, eKind e == Helper] `shouldBe` [2]
+
+    it "sees the match as it was at the start of the tick" $ do
+      let ms = run md m0 (zip (fireballMotion KLeft ++ replicate 60 noInput) (repeat noInput))
+          counts = map (\m -> (length (mEntities m), var0 (mP1 m))) ms
+      case findIndex ((== 1) . fst) counts of
+        Nothing -> expectationFailure "no fireball"
+        Just i -> do
+          counts !! i `shouldBe` (1, 0)
+          counts !! (i + 1) `shouldBe` (1, 1)
+      case findIndex ((== 1) . fst) (reverse counts) of
+        Nothing -> expectationFailure "no fireball"
+        Just j -> do
+          let k = length counts - j
+          counts !! k `shouldBe` (0, 1)
+          counts !! (k + 1) `shouldBe` (0, 0)
+
+    it "keeps Blocky to one fireball at a time" $ do
+      -- far apart, so the first fireball is still flying when the throw recovers
+      let far = demoDef {mdStage = defaultStage {stageStartDistance = 280}}
+          tryTwice = concat (replicate 6 (fireballMotion KLeft ++ replicate 4 noInput))
+          ms = run far (newMatch far) (zip (tryTwice ++ replicate 120 noInput ++ fireballMotion KLeft ++ replicate 20 noInput) (repeat noInput))
+      maximum (map (length . mEntities) ms) `shouldBe` 1
+      -- and throws again once it is gone
+      mNextId (last ms) `shouldBe` 2
+
   describe "validation" $
     it "reports an entity created in a state that does not exist" $ do
       let broken = (stateDef Standing Idle PhysStand) {sdControllers = [on true (spawnProjectile 777 0 0)]}
@@ -322,7 +374,7 @@ spec = describe "entities" $ do
             s0 = newMatch md
          in simulate md (mirrorInputs xs) s0 `isMirrorOf` simulate md xs s0
 
-    it "keeps entities in creation order, under the cap and projectiles near the view" $
+    it "keeps entities in creation order, under the cap, projectiles near the view and one fireball per side" $
       property $ \b ->
         let ok m =
               let ids = map eId (mEntities m)
@@ -332,6 +384,9 @@ spec = describe "entities" $ do
                     && perSide P1 <= maxEntitiesPerSide
                     && perSide P2 <= maxEntitiesPerSide
                     && and [insideView st (mCamera m) (stageOffscreenMargin st) (entityX e) | e <- mEntities m, eKind e == Projectile]
+                    -- Blocky throws one fireball at a time
+                    && perSide P1 <= 1
+                    && perSide P2 <= 1
          in all ok (ticks b)
 
     it "keeps life in range and fighters inside the stage" $
