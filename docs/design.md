@@ -572,6 +572,8 @@ regression suite that any behavior change must update on purpose.
 - **High attacks.** `HitHigh` misses a crouching fighter even if the boxes overlap.
 - **Guard details.** Chip damage can end the round, a guarded attack uses the same hit
   pause and pushback as a hit, and there is no guarding in the air.
+- **Throws.** As described in section 5 (accepted 2026-11-12), except what happens to a
+  throw in progress when the round ends, which is still open (question 8).
 
 ### Open
 
@@ -595,11 +597,15 @@ These need a decision from the maintainer; the code picks a default for each.
    snapshot); entities keep moving while the fighters are in hit pause; "leaving the
    view" is only horizontal; at most 32 entities per side; `numProjectiles` counts one's
    own projectiles, and Blocky uses it to throw one at a time.
-8. **Throws.** Defaults taken for the first version (section 5): a throw cannot be
-   guarded and only catches an opponent on its feet that is not being hit; it beats an
-   attack on the same tick, and two throws on the same tick both miss; nothing hits
-   either fighter during the hold; the escape is the held fighter's own command during
-   the first `tdEscape` ticks, buffer included, and leaves both fighters in their hit
-   state for 12 ticks, unhurt; the hold lasts a fixed time, whatever the thrower's state
-   does; a landed throw is a knockdown and counts for the juggle; only fighters throw,
-   and there are no air throws (a throw cannot catch an airborne opponent).
+8. **Throws.** Resolved (2026-11-12): the defaults stay as described in section 5. A
+   throw cannot be guarded and only catches an opponent on its feet that is not being
+   hit; it beats an attack on the same tick, and two throws on the same tick both miss;
+   nothing hits either fighter during the hold; the escape is the held fighter's own
+   command during the first `tdEscape` ticks, buffer included, and leaves both fighters
+   in their hit state for 12 ticks, unhurt; the hold lasts a fixed time, whatever the
+   thrower's state does; a landed throw is a knockdown and counts for the juggle; only
+   fighters throw, and there are no air throws (a throw cannot catch an airborne
+   opponent). Still open, to decide with the round flow (question 5): a throw in
+   progress when the round ends. Today nothing can end a round during a hold, since
+   nobody can be hit; with a timer, the hold would still run its course and the throw
+   would land, damage included.
